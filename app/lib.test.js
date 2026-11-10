@@ -59,25 +59,17 @@ test('sumUsage ignores missing entries', () => {
   assert.deepEqual(sumUsage([null, { input: 1, output: 2, cacheRead: 3, cacheWrite: 4, costUsd: 0.1 }, undefined]), { input: 1, output: 2, cacheRead: 3, cacheWrite: 4, costUsd: 0.1 });
 });
 
-test('permissionRule builds narrow allow rules and refuses unsafe ones', () => {
+test('permissionRule offers only the exact command, never a wildcard, and refuses unsafe ones', () => {
   const rule = (command) => permissionRule({ tool_name: 'Bash', tool_input: { command } });
-  assert.equal(rule('docker compose up -d'), null); // compose can mount the host: not suggested
-  assert.equal(rule('docker ps -a'), 'Bash(docker ps:*)');
-  assert.equal(rule('git push origin main'), null);
-  assert.equal(rule('git config core.sshCommand x'), null);
-  assert.equal(rule('git show HEAD'), 'Bash(git show:*)');
-  for (const c of ['python -c print', 'bash -c id', 'env FOO=1 make', 'xargs rm', 'sudo ls', 'find . -delete', 'sed -i s/a/b/ f', 'npx some-pkg']) assert.equal(rule(c), null, c);
-  assert.equal(rule("echo 'hi'"), null);
-  assert.equal(rule('curl -s http://x'), 'Bash(curl:*)');
-  assert.equal(rule('$(evil)'), null);
-  assert.equal(rule('git -c core.sshCommand=evil push'), null); // never "Bash(git -c:*)"
-  assert.equal(rule('npm --prefix /tmp run x'), null);
-  assert.equal(rule('ls && rm -rf ~'), null);
-  assert.equal(rule('echo `id`'), null);
-  assert.equal(rule('/bin/sh -c id'), null);
-  assert.equal(rule('git'), null);
-  assert.equal(permissionRule({ tool_name: 'WebFetch', tool_input: {} }), 'WebFetch');
-  assert.equal(permissionRule({ tool_name: 'Bash(x)', tool_input: {} }), null);
+  assert.equal(rule('docker compose up -d'), 'Bash(docker compose up -d)'); // exact: other compose commands stay blocked
+  assert.equal(rule('git  show   HEAD'), 'Bash(git show HEAD)');
+  assert.equal(rule('git push origin main'), 'Bash(git push origin main)');
+  for (const c of ['python -c print', 'bash -c id', 'env FOO=1 make', 'xargs rm', 'sudo ls', 'find . -delete', 'sed -i s/a/b/ f', 'npx some-pkg', 'node -e x', 'rm -rf build']) assert.equal(rule(c), null, c);
+  for (const c of ["echo 'hi'", '$(evil)', 'ls && rm -rf ~', 'echo `id`', '/bin/sh -c id', 'ls *', 'cat a > b', 'x'.repeat(201)]) assert.equal(rule(c), null, c);
+  assert.ok(!String(rule('git -c core.sshCommand=evil push')).includes('*'));
+  assert.equal(permissionRule({ tool_name: 'WebFetch', tool_input: { url: 'https://docs.example.com/a?b=1' } }), 'WebFetch(domain:docs.example.com)');
+  assert.equal(permissionRule({ tool_name: 'WebFetch', tool_input: {} }), null);
+  assert.equal(permissionRule({ tool_name: 'Write', tool_input: { file_path: '.claude/x' } }), null);
 });
 
 test('limitUntil detects usage limits only on failed runs', async () => {
