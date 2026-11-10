@@ -287,6 +287,9 @@ export function jestFailures(json, rootDir) {
   return [...new Set(out)].sort();
 }
 
+// Files that decide how the test suite runs: a change here could make a broken change look green.
+export const isTestHarness = (f) => /(^|\/)(package\.json|jest\.(config|setup)[^/]*|setupTests[^/]*|babel\.config[^/]*|\.babelrc[^/]*|tsconfig[^/]*\.json|\.env\.test)$|(^|\/)__mocks__\/|(^|\/)tests?\/(.*\/)?(setup|global|environment|reporter)[^/]*(\/.*)?$/i.test(f);
+
 export const commitType = (ticketText) => (/^\s*(#+\s*)?(type\s*:?\s*)?bug\b/im.test(ticketText) ? 'fix' : 'feat');
 
 export const ticketTitle = (ticketText) => {

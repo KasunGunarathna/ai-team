@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseVerdict, nextTask, normaliseTasks, normaliseQuestions, secretFiles, formatClaudeEvent, formatCodexEvent, sumUsage, permissionRule, repoForKey, githubTreeUrl, summarySections, parseBaseline, commitType, ticketTitle, jiraComment, poolOf, newestVersion, jestFailures } from './lib.js';
+import { parseVerdict, nextTask, normaliseTasks, normaliseQuestions, secretFiles, formatClaudeEvent, formatCodexEvent, sumUsage, permissionRule, repoForKey, githubTreeUrl, summarySections, parseBaseline, commitType, ticketTitle, jiraComment, poolOf, newestVersion, jestFailures, isTestHarness } from './lib.js';
 
 test('parseVerdict takes the last verdict and defaults to BLOCKED', () => {
   assert.equal(parseVerdict('blah\nVERDICT: PASS'), 'PASS');
@@ -234,4 +234,9 @@ test('jestFailures lists failed tests and suites that failed to run, sorted', ()
   ] };
   assert.deepEqual(jestFailures(json, '/wt/RECK-1'), ['src/auth.test.ts > auth > login > rejects bad pw', 'src/db.test.ts']);
   assert.deepEqual(jestFailures({}, '/wt'), []);
+});
+
+test('isTestHarness flags files that control how tests run', () => {
+  for (const f of ['package.json', 'jest.config.ts', 'api/jest.setup.js', 'src/setupTests.ts', 'babel.config.js', '.babelrc', 'tsconfig.json', '__mocks__/db.js', 'tests/setup/test-db.js', 'test/globalSetup.ts']) assert.ok(isTestHarness(f), f);
+  for (const f of ['src/gift.ts', 'tests/gift.test.js', 'README.md']) assert.ok(!isTestHarness(f), f);
 });

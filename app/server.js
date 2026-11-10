@@ -6,7 +6,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import os from 'node:os';
 import { spawn, execFile, execFileSync } from 'node:child_process';
-import { REF_TYPES, isImageRef, refFileName, parseFigmaUrl, TASK_ID, authFailure, codexRateLimits, tokensSince, isOpen, limitUntil, parseVerdict, nextTask, readyTasks, normaliseTasks, normaliseQuestions, secretFiles, formatClaudeEvent, formatCodexEvent, sumUsage, permissionRule, clip, poolOf, repoForKey, ticketTitle, summarySections, githubTreeUrl, parseBaseline, jestFailures, commitType, jiraComment, newestVersion } from './lib.js';
+import { REF_TYPES, isImageRef, refFileName, parseFigmaUrl, TASK_ID, authFailure, codexRateLimits, tokensSince, isOpen, limitUntil, parseVerdict, nextTask, readyTasks, normaliseTasks, normaliseQuestions, secretFiles, formatClaudeEvent, formatCodexEvent, sumUsage, permissionRule, clip, poolOf, repoForKey, ticketTitle, summarySections, githubTreeUrl, parseBaseline, jestFailures, isTestHarness, commitType, jiraComment, newestVersion } from './lib.js';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
 const DATA = process.env.AI_TEAM_DATA || path.join(ROOT, 'data');
@@ -930,7 +930,8 @@ async function runBeTicket(p, t, job) {
     if (hold) return park('QA', hold);
     t.note = null; save();
     // The tests run the dev's code, so a changed test script or Jest config could fake a clean run: make Quinn check it.
-    const testSetup = git(wt, 'diff', '--name-only', t.baseSha, '--', 'package.json', 'jest.config*', '**/jest.config*', 'test/setup*', 'tests/setup*', 'test/**/setup*', 'tests/**/setup*').split('\n').filter(Boolean);
+    const changed = [git(wt, 'diff', '--name-only', t.baseSha), git(wt, 'ls-files', '--others', '--exclude-standard')].join('\n').split('\n').filter(Boolean);
+    const testSetup = [...new Set(changed.filter(isTestHarness))];
     const reportFile = path.join(DATA, 'logs', p.id, `${t.id}-qa-${cycle}-${Date.now()}.report.md`);
     const qaPrompt = `${agentBody('be-qa')}\n\n---\nJira ticket under test: ${t.id} (${p.repo}):\n\n${p.idea}\n\n` +
       `App test run (npm test, done by the app outside your sandbox): ${tests.failing.length ? `${tests.failing.length} failing, all already failing on clean main:\n${tests.failing.map((f) => `- ${f}`).join('\n')}` : 'all passing'}.\n\n` +
