@@ -4,8 +4,9 @@ import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import os from 'node:os';
 import { spawn, execFile, execFileSync } from 'node:child_process';
-import { TASK_ID, authFailure, isOpen, limitUntil, parseVerdict, nextTask, readyTasks, normaliseTasks, normaliseQuestions, secretFiles, formatClaudeEvent, formatCodexEvent, sumUsage, permissionRule, clip } from './lib.js';
+import { TASK_ID, authFailure, codexRateLimits, tokensSince, isOpen, limitUntil, parseVerdict, nextTask, readyTasks, normaliseTasks, normaliseQuestions, secretFiles, formatClaudeEvent, formatCodexEvent, sumUsage, permissionRule, clip } from './lib.js';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
 const DATA = process.env.AI_TEAM_DATA || path.join(ROOT, 'data');
@@ -596,6 +597,44 @@ async function readJson(req) {
   return s ? JSON.parse(s) : {};
 }
 
+// Codex keeps its plan limits in its own session logs; read the newest one (read-only, cached for a minute).
+let codexCache = { at: 0, value: null };
+function codexLimits() {
+  if (Date.now() - codexCache.at < 60_000) return codexCache.value;
+  let value = null;
+  try {
+    const root = path.join(process.env.CODEX_HOME || path.join(os.homedir(), '.codex'), 'sessions');
+    const newestFirst = (dir) => fs.readdirSync(dir).filter((n) => /^\d+$/.test(n)).sort().reverse();
+    const files = [];
+    outer: for (const y of newestFirst(root)) for (const m of newestFirst(path.join(root, y))) for (const d of newestFirst(path.join(root, y, m))) {
+      const dir = path.join(root, y, m, d);
+      for (const f of fs.readdirSync(dir).filter((n) => n.endsWith('.jsonl'))) files.push(path.join(dir, f));
+      if (files.length >= 20) break outer;
+    }
+    files.sort((a, b) => fs.statSync(b).mtimeMs - fs.statSync(a).mtimeMs);
+    for (const f of files.slice(0, 20)) {
+      const fd = fs.openSync(f, 'r'), size = fs.fstatSync(fd).size, len = Math.min(size, 512 * 1024), buf = Buffer.alloc(len);
+      fs.readSync(fd, buf, 0, len, size - len); fs.closeSync(fd);
+      const limits = codexRateLimits(buf.toString('utf8'));
+      if (limits) { value = { ...limits, at: new Date(fs.statSync(f).mtimeMs).toISOString() }; break; }
+    }
+  } catch { /* no Codex logs: show "unknown" */ }
+  codexCache = { at: Date.now(), value };
+  return value;
+}
+
+// Weekly plan usage (% of each plan's 7-day limit, from Claude and Codex themselves) plus tokens AI Team used in the last 7 days.
+function weeklyUsage() {
+  const cu = state.claudeUsage;
+  const pickClaude = (w) => w && { pct: Math.round((w.utilization ?? 0) * 100), resetsAt: w.resetsAt ? w.resetsAt * 1000 : null };
+  const tokens = tokensSince(state.projects.flatMap((p) => [...p.runs, ...p.tasks.flatMap((t) => t.runs)]), Date.now() - 7 * 86_400_000);
+  const cx = codexLimits();
+  return {
+    claude: { week: pickClaude(cu?.sevenDay), fiveHour: pickClaude(cu?.fiveHour), at: cu?.at ?? null, tokens: tokens.claude },
+    codex: { week: cx?.week ?? null, fiveHour: cx?.fiveHour ?? null, at: cx?.at ?? null, tokens: tokens.codex },
+  };
+}
+
 function view(p) {
   const tasks = p.tasks.map((t) => ({ ...t, usage: sumUsage(t.runs.map((r) => r.usage)) }));
   return { ...p, tasks, usage: sumUsage([...p.runs, ...p.tasks.flatMap((t) => t.runs)].map((r) => r.usage)) };
@@ -621,7 +660,7 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'GET' && url.pathname === '/api/state') return send(res, 200, { busy: busyText(), busyProjects: [...new Set([...jobs.values()].map((j) => j.projectId))], maxAgents: MAX_AGENTS, focus: state.focus || null, breaks: state.breaks,
       jobs: [...jobs.values()].map(({ id, kind, projectId, project, taskId, label, role, agentLabel, agentStartedAt, needs, context }) => ({ id, kind, projectId, project, taskId, label, role, agentLabel, agentStartedAt, needs, context })),
       handoffAt: HANDOFF_AT,
-      teaBreak: !!state.teaBreak, workHours: state.workHours || null, open: isOpen(state.workHours), limits: state.limits, authFail: state.authFail, claudeUsage: state.claudeUsage || null, dailyAt: DAILY_AT, dailyTasks: DAILY_TASKS, projects: state.projects.map(view) });
+      teaBreak: !!state.teaBreak, workHours: state.workHours || null, open: isOpen(state.workHours), weekly: weeklyUsage(), limits: state.limits, authFail: state.authFail, claudeUsage: state.claudeUsage || null, dailyAt: DAILY_AT, dailyTasks: DAILY_TASKS, projects: state.projects.map(view) });
 
     if (req.method === 'GET' && parts[1] === 'log') {
       const [pid, file] = [url.searchParams.get('project'), url.searchParams.get('file')];

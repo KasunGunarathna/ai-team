@@ -122,3 +122,22 @@ test('authFailure spots login and subscription problems only on failed runs', as
   assert.ok(authFailure({ isError: true, text: 'x', apiStatus: 403 }, 1));
   assert.equal(authFailure({ isError: true, text: 'TypeError: x is undefined' }, 1), null);
 });
+
+test('tokensSince sums the last week per engine', async () => {
+  const { tokensSince } = await import('./lib.js');
+  const u = (n) => ({ input: n, output: 1, cacheRead: 0, cacheWrite: 0 });
+  const runs = [
+    { engine: 'claude', startedAt: '2026-11-09T10:00:00Z', usage: u(100) },
+    { engine: 'claude', startedAt: '2026-10-01T10:00:00Z', usage: u(999) },
+    { engine: 'codex', startedAt: '2026-11-08T10:00:00Z', usage: u(10) },
+    { engine: 'codex', startedAt: '2026-11-08T10:00:00Z' },
+  ];
+  assert.deepEqual(tokensSince(runs, Date.parse('2026-11-03T00:00:00Z')), { claude: { total: 101, out: 1, runs: 1 }, codex: { total: 11, out: 1, runs: 1 } });
+});
+
+test('codexRateLimits reads the latest 5-hour and weekly windows', async () => {
+  const { codexRateLimits } = await import('./lib.js');
+  const line = (p, s) => JSON.stringify({ type: 'event_msg', payload: { type: 'token_count', rate_limits: { primary: { used_percent: p, window_minutes: 300, resets_at: 100 }, secondary: { used_percent: s, window_minutes: 10080, resets_at: 200 } } } });
+  assert.deepEqual(codexRateLimits([line(1, 10), '{"bad', line(2, 20), '{"type":"other"}'].join('\n')), { fiveHour: { pct: 2, resetsAt: 100000 }, week: { pct: 20, resetsAt: 200000 } });
+  assert.equal(codexRateLimits('nothing here'), null);
+});

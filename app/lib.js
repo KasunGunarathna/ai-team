@@ -186,3 +186,32 @@ export function authFailure(r, code) {
   const m = text.match(AUTH_TEXT);
   return m ? clip(text.slice(Math.max(0, m.index - 60), m.index + 140), 200) : null;
 }
+
+// ---------- weekly usage ----------
+// Tokens AI Team used per engine since a time (ms): total processed (incl. cache) and output.
+export function tokensSince(runs, since) {
+  const out = { claude: { total: 0, out: 0, runs: 0 }, codex: { total: 0, out: 0, runs: 0 } };
+  for (const r of runs) {
+    const e = out[r.engine];
+    if (!e || !r.usage || !(Date.parse(r.startedAt) >= since)) continue;
+    e.total += r.usage.input + r.usage.output + r.usage.cacheRead + r.usage.cacheWrite;
+    e.out += r.usage.output;
+    e.runs++;
+  }
+  return out;
+}
+
+// Codex session log (JSON lines) -> its latest rate limits: { fiveHour, week } each { pct, resetsAt (ms) }.
+export function codexRateLimits(text) {
+  const lines = text.split('\n');
+  for (let i = lines.length - 1; i >= 0; i--) {
+    if (!lines[i].includes('rate_limits')) continue;
+    let rl;
+    try { rl = JSON.parse(lines[i]).payload?.rate_limits; } catch { continue; }
+    if (!rl) continue;
+    const pick = (w) => w && { pct: Number(w.used_percent) || 0, resetsAt: w.resets_at ? w.resets_at * 1000 : null };
+    const windows = [rl.primary, rl.secondary].filter(Boolean);
+    return { fiveHour: pick(windows.find((w) => w.window_minutes <= 300)), week: pick(windows.find((w) => w.window_minutes >= 10080)) };
+  }
+  return null;
+}

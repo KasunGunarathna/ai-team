@@ -61,6 +61,15 @@ The terminal shows what the app is doing: projects added, planning, every agent 
 - **Whole team:** "☕ Team tea break" stops every agent immediately. Each interrupted task keeps its work in its worktree and goes back to READY (not counted as a failure). "▶ Back to work" starts them again: a developer continues from the partial work, an interrupted QA run starts over, and interrupted planning runs again. **Stop** (on the board) stops all running agents immediately.
 - **New dependencies:** each task's worktree starts without `node_modules`, so DEV installs dependencies in it. This takes longer and uses more disk.
 
+## Weekly usage
+
+Above the office, one card per engine shows:
+
+- **% of the weekly limit left**, with a bar (green, then orange below 30%, red below 10%), when it resets, and the 5-hour window. These numbers come from Claude and Codex themselves, so they include your own use outside AI Team. Claude reports them on each AI Team run; for Codex, the app reads the newest session log in `~/.codex/sessions` (read-only). They are as fresh as the last run ("as of …").
+- **Tokens AI Team used in the last 7 days**: total processed (including cache) and output, from AI Team's own run records.
+
+The board sidebar shows the "% left" for both.
+
 ## Context and fresh sessions
 
 - **Every task starts fresh:** each step (planning, every developer attempt, every QA run) is a new Claude Code or Codex session, so one task's conversation never fills up the next one.
