@@ -13,6 +13,8 @@
   header { max-width:1240px; margin:0 auto; padding:14px 16px 10px; display:flex; align-items:center; gap:12px; flex-wrap:wrap; }
   h1 { font-size:22px; margin:0; letter-spacing:.2px; }
   h2 { font-size:13px; text-transform:uppercase; letter-spacing:.6px; color:var(--muted); margin:0 0 10px; }
+  .rooms { max-width:1240px; margin:0 auto 8px; padding:0 16px; display:flex; gap:8px; }
+  .rooms button { border-radius:999px; } .rooms button[aria-pressed="true"] { background:var(--accent); color:#fff; }
   .chip { font-size:12px; padding:3px 10px; border-radius:999px; background:var(--card); border:1px solid var(--line); }
   .chip.open { color:#fff; background:var(--ok); border-color:var(--ok); } .chip.closed { color:#fff; background:#495057; border-color:#495057; }
   .chip.pause { color:#fff; background:var(--accent); border-color:var(--accent); }
@@ -117,9 +119,10 @@
   <a class="btn" href="/board">Open task board →</a>
 </header>
 
+<div class="rooms" role="group" aria-label="Rooms"><button type="button" class="ghost" data-room="main">🏢 Main office</button><button type="button" class="ghost" data-room="squad">🦸 Squad room</button></div>
 <div class="stage">
 <div id="agentCard" hidden role="dialog" aria-label="Agent"></div>
-<svg id="office" viewBox="0 0 1400 880" role="img" aria-labelledby="officeTitle">
+<svg id="office" viewBox="0 0 1400 720" role="img" aria-labelledby="officeTitle">
   <title id="officeTitle">Cartoon office where the AI agents work. Live status is listed below the picture.</title>
   <defs>
     <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1"><stop id="sky1" offset="0" stop-color="#7cc4f2"/><stop id="sky2" offset="1" stop-color="#d8f0ff"/></linearGradient>
@@ -136,13 +139,6 @@
   <rect y="246" width="1400" height="14" fill="#c8a173"/>
   <rect y="260" width="1400" height="460" fill="url(#planks)"/>
   <ellipse cx="300" cy="640" rx="200" ry="58" fill="#e8916f" opacity=".35"/>
-  <!-- BE ticket lounge: Rocco, Gigi and Quinn vibe-code on the sofa, no desks -->
-  <rect y="720" width="1400" height="160" fill="url(#planks)"/>
-  <rect y="716" width="1400" height="8" fill="#c8a173"/>
-  <ellipse cx="700" cy="842" rx="360" ry="34" fill="#9775fa" opacity=".22"/>
-  <g transform="translate(1040,742)"><rect width="230" height="40" rx="10" fill="#f3f0ff" stroke="#7950f2" stroke-width="3"/><text x="115" y="27" text-anchor="middle" font-size="17" font-weight="800" fill="#5f3dc4">🛋️ BE ticket lounge</text></g>
-  <g transform="translate(180,770)"><rect x="-14" y="30" width="28" height="34" rx="6" fill="#e8590c"/><path d="M0 30 C-24 6 -10 -22 0 -26 C10 -22 24 6 0 30Z" fill="#40c057"/></g>
-  <rect x="420" y="742" width="560" height="62" rx="24" fill="#7048e8"/>
   <ellipse cx="760" cy="652" rx="190" ry="52" fill="#7fb7a4" opacity=".25"/>
 
   <!-- windows -->
@@ -233,12 +229,35 @@
   <g id="agents"></g>
   <g id="front"></g>
 
-  <rect id="nightveil" width="1400" height="880" fill="#0b1026" opacity="0"/>
+  <rect id="nightveil" width="1400" height="720" fill="#0b1026" opacity="0"/>
   <g id="closedMsg" opacity="0" style="transition:opacity 1s" transform="translate(100,0)">
     <rect x="390" y="300" width="420" height="110" rx="20" fill="#fff" opacity=".95"/>
     <text x="600" y="345" text-anchor="middle" font-size="24" font-weight="800" fill="#2b2d42">🌙 Office closed</text>
     <text id="closedSub" x="600" y="380" text-anchor="middle" font-size="16" fill="#555"></text>
   </g>
+</svg>
+<svg id="squadRoom" viewBox="0 0 1400 720" role="img" aria-label="Squad room: the Superpowers &amp; Ponytail Squad" style="display:none;width:100%;height:auto;border-radius:20px;box-shadow:0 14px 40px rgba(60,40,20,.18)">
+  <rect width="1400" height="256" fill="#f3f0ff"/>
+  <rect y="246" width="1400" height="14" fill="#9775fa"/>
+  <rect y="260" width="1400" height="460" fill="url(#planks)"/>
+  <ellipse cx="660" cy="640" rx="420" ry="60" fill="#9775fa" opacity=".2"/>
+  <g transform="translate(40,40)"><rect width="360" height="52" rx="14" fill="#fff" stroke="#7950f2" stroke-width="4"/><text x="180" y="34" text-anchor="middle" font-size="20" font-weight="800" fill="#5f3dc4">🦸 Superpowers &amp; Ponytail Squad</text></g>
+  <g transform="translate(40,110)"><text font-size="14" fill="#5f3dc4" font-weight="700" y="16">Captain Plan hands out tickets · git only · you merge</text></g>
+  <g transform="translate(520,30)">
+    <rect width="380" height="200" rx="12" fill="#fff" stroke="#adb5bd" stroke-width="5"/>
+    <text x="20" y="34" font-size="18" font-weight="800" fill="#2b2d42">📋 To-do</text>
+    <g id="todoBoard"></g>
+  </g>
+  <g transform="translate(1000,60)">
+    <rect width="150" height="188" rx="8" fill="#a47148" stroke="#6f4518" stroke-width="5"/><circle cx="128" cy="100" r="7" fill="#ffd43b"/>
+    <g id="squadReader"><rect x="160" y="80" width="18" height="30" rx="4" fill="#495057"/><circle class="light" cx="169" cy="92" r="4" fill="#40c057"/></g>
+  </g>
+  <g transform="translate(1210,560)"><ellipse cx="0" cy="40" rx="62" ry="34" fill="#f783ac"/><ellipse cx="0" cy="20" rx="48" ry="30" fill="#faa2c1"/></g>
+  <g transform="translate(110,470)"><rect width="120" height="56" rx="8" fill="#b08968"/><rect y="-8" width="120" height="12" rx="4" fill="#7f5539"/><circle cx="34" cy="-16" r="11" fill="#ffa8a8"/><circle cx="64" cy="-14" r="9" fill="#ffe066"/><circle cx="90" cy="-16" r="10" fill="#8ce99a"/><text x="60" y="36" font-size="12" text-anchor="middle" fill="#fff" font-weight="700">🍪 SNACKS</text></g>
+  <rect x="300" y="470" width="760" height="62" rx="24" fill="#7048e8"/>
+  <g id="squadAgents"></g>
+  <g id="squadFront"></g>
+  <rect id="squadVeil" width="1400" height="720" fill="#0b1026" opacity="0" style="transition:opacity 1.2s;pointer-events:none"/>
 </svg>
 </div>
 
@@ -276,12 +295,14 @@ const TEAM = [
   { role: 'frontend-dev', name: 'Pixel', title: 'Frontend dev', engine: 'Claude', shirt: '#e64980', hair: '#f59f00', skin: '#ffe0bd', style: 'long' },
   { role: 'qa', name: 'Bugsy', title: 'QA engineer', engine: 'Codex', shirt: '#0ca678', hair: '#7a4a2a', skin: '#d9a066', style: 'glasses' },
   { role: 'ui-ux', name: 'Iris', title: 'UI/UX designer', engine: 'Codex', shirt: '#f76707', hair: '#862e9c', skin: '#f1c27d', style: 'beret' },
-  // BE ticket team: no desks, they code on the lounge sofa with laptops (sofaX = seat).
-  { role: 'rc-dev', name: 'Rocco', title: 'ReviewCook dev', engine: 'Claude', shirt: '#f08c00', hair: '#343a40', skin: '#c68642', style: 'phones', sofaX: 540 },
-  { role: 'gl-dev', name: 'Gigi', title: 'GiftLips dev', engine: 'Claude', shirt: '#d6336c', hair: '#5f3dc4', skin: '#ffdbac', style: 'long', sofaX: 700 },
-  { role: 'be-qa', name: 'Quinn', title: 'Ticket QA', engine: 'Codex', shirt: '#2f9e44', hair: '#a0522d', skin: '#e0ac69', style: 'glasses', sofaX: 860 },
+  // Superpowers & Ponytail Squad: own room, no desks; devs and QA code on the sofa with laptops (sofaX = seat).
+  { role: 'squad-pm', name: 'Captain Plan', title: 'Squad PM', engine: 'App', shirt: '#e03131', hair: '#f59f00', skin: '#ffd8a8', style: 'bun', room: 'squad', cape: true },
+  { role: 'rc-dev', name: 'Rocket Rocco', title: 'ReviewCook dev', engine: 'Claude', shirt: '#f08c00', hair: '#343a40', skin: '#c68642', style: 'phones', room: 'squad', sofaX: 440 },
+  { role: 'gl-dev', name: 'Giggly Gigi', title: 'GiftLips dev', engine: 'Claude', shirt: '#d6336c', hair: '#5f3dc4', skin: '#ffdbac', style: 'long', room: 'squad', sofaX: 680 },
+  { role: 'be-qa', name: 'Detective Quinn', title: 'Squad QA', engine: 'Codex', shirt: '#2f9e44', hair: '#a0522d', skin: '#e0ac69', style: 'glasses', room: 'squad', sofaX: 920 },
 ];
-const SOFA_Y = 772;
+const SOFA_Y = 500; // squad sofa seat
+const inSquad = (t) => t.room === 'squad';
 const DESK_X = { 'pm-ba': 190, 'backend-dev': 450, 'frontend-dev': 710, 'qa': 970, 'ui-ux': 1260 };
 const SEAT_Y = 372;
 const SPOTS = [
@@ -298,7 +319,21 @@ const TEA = ['coffee', 'fridge', 'cooler', 'plant']; // tea-break spots during a
 const BOARD_SPOT = { x: 580, y: 262 };
 const CHARGE = ['sofa1', 'sofa2', 'pongL', 'pongR']; // usage limit: recharge in the lounge
 const DOOR = [{ id: 'door1', x: 290, y: 268 }, { id: 'door2', x: 372, y: 282, lift: 40 }]; // login problem: waiting at the door
-const engineOf = (role) => (['qa', 'ui-ux', 'be-qa'].includes(role) ? 'codex' : 'claude');
+const SQUAD_SPOTS = [
+  { id: 'snacks', x: 170, y: 560, say: ['🍪 Snack attack', '🧃 Juice box time'] },
+  { id: 'beanbag', x: 1210, y: 560, say: ['😴 Power nap', '💭 Brainstorming'], sit: true },
+  { id: 'window', x: 300, y: 620, say: ['🦸 Superpowers loading…', '🎀 Ponytail mode: tiny diffs'] },
+  { id: 'rug1', x: 560, y: 640, say: ['🧩 Planning the next fix', '📐 Smallest change wins'] },
+  { id: 'rug2', x: 820, y: 640, say: ['🔍 Hunting edge cases', '✅ Tests first!'] },
+  { id: 'corner', x: 1060, y: 640, say: ['🎮 Quick game', '🤸 Stretch break'] },
+];
+const SQUAD_TEA = ['snacks', 'beanbag', 'window', 'corner'];
+const SQUAD_CHARGE = ['beanbag', 'rug1', 'rug2', 'corner'];
+const SQUAD_DOOR = [{ id: 'sdoor1', x: 1060, y: 300 }, { id: 'sdoor2', x: 1140, y: 320, lift: 40 }];
+const SQUAD_BOARD = { x: 720, y: 300 };
+const ROOM = { main: { spots: SPOTS, tea: TEA, charge: CHARGE, door: DOOR }, squad: { spots: SQUAD_SPOTS, tea: SQUAD_TEA, charge: SQUAD_CHARGE, door: SQUAD_DOOR } };
+const roomOf = (t) => ROOM[inSquad(t) ? 'squad' : 'main'];
+const engineOf = (role) => (role === 'squad-pm' ? 'none' : ['qa', 'ui-ux', 'be-qa'].includes(role) ? 'codex' : 'claude'); // Captain Plan is the app
 const holdOf = (role) => { const e = engineOf(role); return S.authFail?.[e] ? 'auth' : S.limits?.[e] > Date.now() ? 'limit' : null; };
 const $ = (id) => document.getElementById(id);
 const NS = 'http://www.w3.org/2000/svg';
@@ -319,7 +354,7 @@ $('windows').append(...[40, 960].map((x) => svgEl(`
     <path d="M100 10V140M10 75H190" stroke="#fff" stroke-width="6"/>
   </g>`)));
 
-for (const t of TEAM.filter((m) => !m.sofaX)) {
+for (const t of TEAM.filter((m) => !inSquad(m))) {
   const x = DESK_X[t.role];
   $('desks').append(svgEl(`
     <g class="desk" id="desk-${t.role}" transform="translate(${x},0)">
@@ -348,8 +383,8 @@ for (const t of TEAM.filter((m) => !m.sofaX)) {
 }
 // laptops on the BE lounge sofa: same .desk/.glow/.scr/.code/.lowbat parts, so working and low-battery states animate
 for (const t of TEAM.filter((m) => m.sofaX)) {
-  $('front').append(svgEl(`
-    <g class="desk" id="desk-${t.role}" transform="translate(${t.sofaX},0)">
+  $('squadFront').append(svgEl(`
+    <g class="desk" id="desk-${t.role}" transform="translate(${t.sofaX},${SOFA_Y - 772})">
       <ellipse class="glow" cx="0" cy="796" rx="54" ry="30" fill="${t.shirt}" filter="url(#soft)"/>
       <rect x="-37" y="774" width="74" height="46" rx="6" fill="#343a40"/>
       <rect class="scr" x="-32" y="778" width="64" height="36" rx="3" fill="#212529"/>
@@ -361,8 +396,8 @@ for (const t of TEAM.filter((m) => m.sofaX)) {
       <rect x="-44" y="818" width="88" height="7" rx="3" fill="#868e96"/>
     </g>`));
 }
-$('front').append(svgEl(`<rect x="410" y="822" width="580" height="44" rx="16" fill="#5f3dc4"/><rect x="398" y="770" width="34" height="96" rx="15" fill="#5233b8"/><rect x="968" y="770" width="34" height="96" rx="15" fill="#5233b8"/>
-  ${TEAM.filter((m) => m.sofaX).map((m) => `<rect x="${m.sofaX - 50}" y="846" width="100" height="18" rx="6" fill="#fff8e7"/><text x="${m.sofaX}" y="859" text-anchor="middle" font-size="11" font-weight="700" fill="#2b2d42">${m.name} · ${m.title}</text>`).join('')}`));
+$('squadFront').append(svgEl(`<g transform="translate(-110,${SOFA_Y - 772})"><rect x="410" y="822" width="760" height="44" rx="16" fill="#5f3dc4"/><rect x="398" y="770" width="34" height="96" rx="15" fill="#5233b8"/><rect x="1148" y="770" width="34" height="96" rx="15" fill="#5233b8"/></g>
+  ${TEAM.filter((m) => m.sofaX).map((m) => ` <rect x="${m.sofaX - 62}" y="${SOFA_Y + 74}" width="124" height="18" rx="6" fill="#fff8e7"/><text x="${m.sofaX}" y="${SOFA_Y + 87}" text-anchor="middle" font-size="11" font-weight="700" fill="#2b2d42">${m.name} · ${m.title}</text>`).join('')}`));
 // sofa front and arms over seated agents
 $('front').append(svgEl(`<rect x="182" y="596" width="236" height="52" rx="16" fill="#4263eb"/><rect x="176" y="566" width="30" height="82" rx="14" fill="#3b5bdb"/><rect x="394" y="566" width="30" height="82" rx="14" fill="#3b5bdb"/>`));
 
@@ -382,6 +417,7 @@ for (const t of TEAM) {
     <title>${t.name}: ${t.title} (${t.engine})</title>
     <ellipse cx="0" cy="62" rx="24" ry="6" fill="#00000030"/>
     <g class="bob">
+      ${t.cape ? `<path d="M-22 4 L-34 56 L34 56 L22 4Z" fill="#c92a2a"/>` : ''}
       <rect class="leg l" x="-14" y="42" width="11" height="20" rx="5" fill="#343a40"/>
       <rect class="leg r" x="3" y="42" width="11" height="20" rx="5" fill="#343a40"/>
       <rect x="-23" y="0" width="46" height="48" rx="17" fill="${t.shirt}"/>
@@ -410,8 +446,8 @@ for (const t of TEAM) {
     </g>`);
   g.classList.add('agent', 'away'); // hidden until first placed, so nobody flashes at the top-left corner
   g.id = 'ag-' + t.role;
-  g.onclick = () => { cardRole = t.role; drawCard(); };
-  $('agents').append(g);
+  g.onclick = () => { if (cardRole !== t.role) { cardErr = ''; cardNote = null; cardPick = null; } cardRole = t.role; drawCard(); };
+  $(inSquad(t) ? 'squadAgents' : 'agents').append(g);
 }
 
 // ---------- movement and speech ----------
@@ -446,10 +482,14 @@ const hhmm = (ms) => new Date(ms).toLocaleTimeString([], { hour: '2-digit', minu
 const ctxText = (c) => !c ? 'context: —' : `${c.pct}% context used · ${c.window - c.used >= 1000 ? Math.round((c.window - c.used) / 1000) + 'k' : c.window - c.used} left (fresh session at ${S.handoffAt}%)`;
 const left = (ms) => { const m = Math.max(0, Math.round((ms - Date.now()) / 60000)); return m >= 60 ? `${Math.floor(m / 60)}h ${m % 60}m` : `${m}m`; };
 
-function freeSpot(role) {
+function freeSpot(t) {
+  const { spots } = roomOf(t), role = t.role;
   const taken = new Set(Object.entries(pos).filter(([r]) => r !== role).map(([, p]) => p.spot));
-  return pick(SPOTS.filter((s) => !taken.has(s.id) && s.id !== pos[role]?.spot)) || SPOTS[0];
+  return pick(spots.filter((s) => !taken.has(s.id) && s.id !== pos[role]?.spot)) || spots[0];
 }
+// Captain Plan's hand-off walk: ticket key -> previous status, and the walk in progress { key, dev, until }.
+const prevSquad = new Map();
+let handoff = null;
 
 // The job an agent is working on right now, shaped like { label, project, projectId, startedAt }.
 function activeFor(role) {
@@ -467,18 +507,26 @@ function update() {
   if (!S) return;
   const nowMs = Date.now();
   const paused = S.teaBreak;
-  let chargeIndex = 0, doorIndex = 0;
-  const waiting = S.projects.reduce((n, p) => n + p.decisions.filter((d) => !d.answer).length, 0);
-  let napIndex = 0;
+  const idx = { main: { charge: 0, door: 0, nap: 0 }, squad: { charge: 0, door: 0, nap: 0 } };
+  const isSquadP = (p) => p.kind === 'be-ticket';
+  const waiting = S.projects.filter((p) => !isSquadP(p)).reduce((n, p) => n + p.decisions.filter((d) => !d.answer).length, 0);
+  const squadWaiting = S.projects.filter(isSquadP).reduce((n, p) => n + p.decisions.filter((d) => !d.answer).length, 0);
+  const squadTickets = S.projects.filter(isSquadP).map((p) => p.tasks[0]).filter(Boolean);
+  for (const tk of squadTickets) { // a ticket left TODO since last refresh: Captain Plan walks it to its dev
+    if (prevSquad.get(tk.id) === 'TODO' && tk.status !== 'TODO' && !first) handoff = { key: tk.id, dev: tk.owner, until: nowMs + 6000 };
+    prevSquad.set(tk.id, tk.status);
+  }
+  drawTodo(squadTickets);
   for (const t of TEAM) {
+    const R = roomOf(t), I = idx[inSquad(t) ? 'squad' : 'main'];
     const act = activeFor(t.role), isActive = !!act, onBreak = !!S.breaks[t.role], hold = isActive ? null : holdOf(t.role);
     setClass(t, 'away', !S.open && !isActive);
     setClass(t, 'typing', isActive);
     setClass(t, 'back', isActive && !t.sofaX); // sofa coders face the viewer
     setClass(t, 'tea', (!!paused || onBreak) && !isActive && !hold);
     setClass(t, 'charging', hold === 'limit');
-    $('desk-' + t.role).classList.toggle('lowbat', hold === 'limit');
-    $('desk-' + t.role).classList.toggle('on', isActive);
+    $('desk-' + t.role)?.classList.toggle('lowbat', hold === 'limit'); // Captain Plan has no laptop
+    $('desk-' + t.role)?.classList.toggle('on', isActive);
 
     if (isActive) {
       if (t.sofaX) place(t, t.sofaX, SOFA_Y, 'desk', first); else place(t, DESK_X[t.role], SEAT_Y, 'desk', first);
@@ -488,26 +536,34 @@ function update() {
     } else if (!S.open) {
       speak(t, '');
     } else if (hold === 'auth') {
-      const d = DOOR[doorIndex++ % DOOR.length];
+      const d = R.door[I.door++ % R.door.length];
       place(t, d.x, d.y, d.id, first);
       speak(t, '🔑 Login needed', d.lift);
     } else if (hold === 'limit') {
-      const chargeSpot = CHARGE[chargeIndex++ % CHARGE.length];
-      const s = SPOTS.find((x) => x.id === chargeSpot);
+      const chargeSpot = R.charge[I.charge++ % R.charge.length];
+      const s = R.spots.find((x) => x.id === chargeSpot);
       place(t, s.x, s.y, s.id, first);
       speak(t, '🔋 Recharging', s.lift); // the reset time is on the whiteboard and in the header
     } else if (paused || onBreak) {
-      const teaSpot = TEA[napIndex++ % TEA.length];
-      const s = SPOTS.find((x) => x.id === teaSpot);
+      const teaSpot = R.tea[I.nap++ % R.tea.length];
+      const s = R.spots.find((x) => x.id === teaSpot);
       place(t, s.x, s.y, s.id, first);
       speak(t, onBreak && !paused ? '☕ On a break' : '☕ Tea break!', s.lift);
+    } else if (t.role === 'squad-pm') {
+      const dev = handoff && handoff.until > nowMs && TEAM.find((m) => m.role === handoff.dev);
+      if (dev) { place(t, dev.sofaX, SOFA_Y + 120, 'handoff', first); speak(t, `🦸 ${handoff.key} → ${dev.name.split(' ').pop()}`); }
+      else {
+        const todo = squadTickets.filter((x) => x.status === 'TODO').length;
+        place(t, SQUAD_BOARD.x, SQUAD_BOARD.y, 'board', first);
+        speak(t, squadWaiting ? `⚑ ${squadWaiting} need${squadWaiting > 1 ? '' : 's'} you!` : todo ? `📋 ${todo} in the queue` : '🎉 Queue empty');
+      }
     } else if (t.role === 'pm-ba' && waiting) {
       place(t, BOARD_SPOT.x, BOARD_SPOT.y, 'board', first);
       speak(t, `⚑ ${waiting} decision${waiting > 1 ? 's' : ''} need you!`);
     } else {
       const p = pos[t.role];
       if (!p || ['desk', 'board'].includes(p.spot) || !p.until || nowMs > p.until) {
-        const s = freeSpot(t.role);
+        const s = freeSpot(t);
         place(t, s.x, s.y, s.id, first);
         pos[t.role].until = nowMs + 9000 + Math.random() * 9000;
         speak(t, pick(s.say), s.lift);
@@ -517,6 +573,18 @@ function update() {
   first = false;
   const onPong = Object.values(pos).filter((p) => p.spot === 'pongL' || p.spot === 'pongR').length === 2;
   $('ball').classList.toggle('rally', onPong && !paused && S.open);
+}
+
+// Squad to-do board: the queue in Captain Plan's order (priority, then when added); text via textContent only.
+function drawTodo(tickets) {
+  const todo = tickets.filter((x) => x.status === 'TODO').sort((a, b) => (b.priority ?? 0) - (a.priority ?? 0) || (a.queuedAt ?? 0) - (b.queuedAt ?? 0));
+  const g = $('todoBoard');
+  g.replaceChildren(...(todo.length ? todo.slice(0, 6) : [null]).map((tk, i) => {
+    const row = svgEl(`<rect x="20" y="${50 + i * 24}" width="340" height="20" rx="5" fill="${tk ? (tk.owner === 'rc-dev' ? '#fff4e6' : '#fff0f6') : 'transparent'}"/><text x="28" y="${65 + i * 24}" font-size="13" fill="#2b2d42"></text>`);
+    row.querySelector('text').textContent = tk ? `${i + 1}. ${tk.id} · ${clip(tk.title ?? '', 34)}` : 'Inbox zero 🎉';
+    return row;
+  }));
+  if (todo.length > 6) { const more = svgEl('<text x="28" y="196" font-size="12" fill="#868e96"></text>'); more.querySelector('text').textContent = `+${todo.length - 6} more`; g.append(more); }
 }
 
 function drawBoard() {
@@ -547,7 +615,7 @@ function scenery() {
 
 function hud() {
   const open = S.open, paused = S.teaBreak;
-  const outages = ['claude', 'codex'].map((e) => ({ e, name: e === 'claude' ? 'Claude' : 'Codex', who: e === 'claude' ? 'Mira, Bolt, Pixel, Rocco and Gigi' : 'Bugsy, Iris and Quinn', auth: S.authFail?.[e], until: S.limits?.[e] > Date.now() ? S.limits[e] : null })).filter((o) => o.auth || o.until);
+  const outages = ['claude', 'codex'].map((e) => ({ e, name: e === 'claude' ? 'Claude' : 'Codex', who: e === 'claude' ? 'Mira, Bolt, Pixel, Rocket Rocco and Giggly Gigi' : 'Bugsy, Iris and Detective Quinn', auth: S.authFail?.[e], until: S.limits?.[e] > Date.now() ? S.limits[e] : null })).filter((o) => o.auth || o.until);
   for (const e of ['claude', 'codex']) {
     const o = outages.find((x) => x.e === e), chip = $(e + 'Chip');
     chip.hidden = !o;
@@ -568,6 +636,7 @@ function hud() {
   $('signbg').setAttribute('fill', open ? '#2f9e44' : '#c92a2a');
   $('signtx').textContent = open ? 'OPEN' : 'CLOSED';
   $('nightveil').setAttribute('opacity', open ? 0 : 0.55);
+  $('squadVeil').setAttribute('opacity', open ? 0 : 0.55);
   $('closedMsg').setAttribute('opacity', open ? 0 : 1);
   $('closedSub').textContent = wh ? `The team went home. Back at ${wh.start}${wh.weekdaysOnly ? ' (Mon–Fri)' : ''}.` : '';
   $('pauseChip').hidden = !paused;
@@ -731,7 +800,7 @@ function drawCard() {
   const act = activeFor(t.role), onBreak = !!S.breaks[t.role];
   const waiting = S.projects.reduce((n, p) => n + p.decisions.filter((d) => !d.answer).length, 0);
   const el = (tag, props = {}, ...kids) => { const e = Object.assign(document.createElement(tag), props); e.append(...kids.filter(Boolean)); return e; };
-  card.replaceChildren(
+  card.replaceChildren(...[ // filter: replaceChildren would print a null as the text "null"
     el('button', { className: 'x', textContent: '×', title: 'Close', onclick: () => { cardRole = null; drawCard(); } }),
     el('h3', { textContent: `${t.name}` }),
     el('div', { className: 'muted', textContent: `${t.title} · ${t.engine}` }),
@@ -740,7 +809,33 @@ function drawCard() {
     el('div', { className: 'row' },
       el('button', { textContent: onBreak ? '▶ Back to work' : '☕ Send on a break', onclick: () => post('/api/break', { role: t.role, on: !onBreak }) }),
       waiting ? el('button', { className: 'ghost', textContent: `⚑ ${waiting} decision${waiting > 1 ? 's' : ''}`, onclick: () => { cardRole = null; drawCard(); showDecisions(); } }) : null,
-      el('a', { className: 'btn', href: '/board', textContent: 'Board', style: 'background:none;color:var(--accent)' })));
+      el('a', { className: 'btn', href: '/board', textContent: 'Board', style: 'background:none;color:var(--accent)' })),
+    squadControls(t, act, el)].filter(Boolean));
+}
+// Squad agent controls (one agent at a time). Stop / Change task / Give a different ticket; the ticket's work is always kept.
+let cardErr = '', cardNote = null, cardPick = null;
+async function squad(body) {
+  const r = await fetch('/api/squad/agent', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  cardErr = r.ok ? '' : (await r.json().catch(() => ({}))).error || r.statusText;
+  refresh();
+}
+function squadControls(t, act, el) {
+  if (!['rc-dev', 'gl-dev', 'be-qa'].includes(t.role)) return null;
+  const dev = t.role !== 'be-qa';
+  const todo = S.projects.filter((p) => p.kind === 'be-ticket').map((p) => p.tasks[0]).filter((x) => x?.status === 'TODO' && x.owner === t.role);
+  cardNote ??= el('textarea', { placeholder: 'What should change? (the ticket goes to BLOCKED with this note; Retry continues with it)', rows: 2, style: 'width:100%;margin-top:6px' });
+  cardPick ??= el('select', { style: 'margin-right:6px' });
+  const keep = cardPick.value;
+  cardPick.replaceChildren(...todo.map((x) => el('option', { value: x.id, textContent: `${x.id} · ${clip(x.title ?? '', 30)}` })));
+  if (todo.some((x) => x.id === keep)) cardPick.value = keep;
+  return el('div', { style: 'margin-top:10px;border-top:1px solid var(--line);padding-top:8px' },
+    el('b', { textContent: '🦸 Squad controls' }),
+    el('div', { className: 'row', style: 'margin-top:6px' },
+      el('button', { className: 'ghost', textContent: '⏹ Stop now', disabled: !act, title: act ? '' : 'Not working on a ticket', onclick: () => { if (confirm(`Stop ${t.name}? The ticket goes to BLOCKED; its work is kept.`)) squad({ role: t.role, action: 'stop' }); } })),
+    dev ? el('div', {}, cardNote, el('button', { className: 'ghost', textContent: '✏️ Change task', disabled: !act, onclick: () => squad({ role: t.role, action: 'change', note: cardNote.value }).then(() => { if (!cardErr) cardNote.value = ''; }) })) : null,
+    dev ? el('div', { className: 'row', style: 'margin-top:6px' }, todo.length ? cardPick : el('span', { className: 'muted', textContent: 'No to-do tickets for this dev' }),
+      el('button', { className: 'ghost', textContent: '↪ Give this ticket', disabled: !todo.length, onclick: () => squad({ role: t.role, action: 'swap', ticketId: cardPick.value }) })) : null,
+    cardErr ? el('div', { style: 'color:#c92a2a;font-size:13px;margin-top:6px', textContent: cardErr }) : null);
 }
 $('teaBtn').onclick = async () => { await fetch('/api/teabreak', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ on: !S.teaBreak }) }); refresh(); };
 $('resumeBtn').onclick = async () => { await fetch('/api/resume', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }); refresh(); };
@@ -750,6 +845,15 @@ async function refresh() {
   hoursForm(); drawUsage(); drawBoard(); drawDecisions(); update(); hud(); drawCard();
   AiSounds.watch(S);
 }
+// Rooms: one scene at a time; the choice is remembered per browser.
+function showRoom(room) {
+  $('office').style.display = room === 'main' ? '' : 'none'; $('squadRoom').style.display = room === 'squad' ? '' : 'none'; // #office CSS sets display, so hidden alone is not enough
+  for (const b of document.querySelectorAll('.rooms button')) b.setAttribute('aria-pressed', b.dataset.room === room);
+  try { localStorage.setItem('aiteam-room', room); } catch { /* not remembered */ }
+}
+for (const b of document.querySelectorAll('.rooms button')) b.onclick = () => showRoom(b.dataset.room);
+let savedRoom = 'main'; try { savedRoom = localStorage.getItem('aiteam-room') || 'main'; } catch { /* default */ }
+showRoom(savedRoom === 'squad' ? 'squad' : 'main');
 scenery(); setInterval(scenery, 30000);
 refresh(); setInterval(refresh, 3000);
 </script>
