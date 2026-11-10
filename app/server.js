@@ -6,7 +6,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import os from 'node:os';
 import { spawn, execFile, execFileSync } from 'node:child_process';
-import { REF_TYPES, isImageRef, refFileName, parseFigmaUrl, TASK_ID, authFailure, codexRateLimits, tokensSince, isOpen, limitUntil, parseVerdict, nextTask, readyTasks, normaliseTasks, normaliseQuestions, secretFiles, formatClaudeEvent, formatCodexEvent, sumUsage, permissionRule, clip, poolOf, repoForKey, ticketTitle, summarySections, githubTreeUrl, parseBaseline, commitType, jiraComment, newestVersion } from './lib.js';
+import { REF_TYPES, isImageRef, refFileName, parseFigmaUrl, TASK_ID, authFailure, codexRateLimits, tokensSince, isOpen, limitUntil, parseVerdict, nextTask, readyTasks, normaliseTasks, normaliseQuestions, secretFiles, formatClaudeEvent, formatCodexEvent, sumUsage, permissionRule, clip, poolOf, repoForKey, ticketTitle, summarySections, githubTreeUrl, parseBaseline, jestFailures, commitType, jiraComment, newestVersion } from './lib.js';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
 const DATA = process.env.AI_TEAM_DATA || path.join(ROOT, 'data');
@@ -375,9 +375,9 @@ function applyAnswer(p, d, value, note) {
 // mode: 'continue' keeps the task's worktree, 'restart' throws it away (user chose it explicitly; only this task's work).
 function retryTask(p, t, mode, note) {
   say(`↻ [${p.name}] ${t.id} set to retry (${mode === 'restart' ? "discarding this task's work" : 'keeping its work'})`);
-  if (mode === 'restart' && p.kind === 'be-ticket') { removeBeWorktree(p, t); t.baseline = null; } // never deletes a branch with commits
+  if (mode === 'restart' && p.kind === 'be-ticket') { removeBeWorktree(p, t); Object.assign(t, { baseline: null, outcome: null, comment: null, branchUrl: null }); } // never deletes a branch with commits
   else if (mode === 'restart') removeWorktree(p, t);
-  p.decisions = p.decisions.filter((d) => !(d.kind === 'blocked' && d.taskId === t.id && !d.answer));
+  p.decisions = p.decisions.filter((d) => !(['blocked', 'push'].includes(d.kind) && d.taskId === t.id && !d.answer));
   Object.assign(t, { status: 'READY', cycles: 0, note: null, skipDev: false, feedback: null, instructions: note || null });
   if (!p.auto) p.runBudget = Math.max(p.runBudget, 1);
 }
@@ -793,6 +793,42 @@ function beUnsafe(p, t, wt, when) {
 }
 const NM_RULE = 'node_modules is a link to the owner\'s install: never write, edit or delete anything inside it; to change dependencies run exactly `rm node_modules` first, then the clean install.';
 
+// The app (not an agent) runs the suite outside any sandbox, so tests reach the local DB; Quinn reviews offline.
+const TEST_TIMEOUT_MS = 20 * 60_000;
+function runTests(p, t, wt, label, job) {
+  const rel = path.join(p.planDir, `jest-${label}.json`), out = path.join(wt, rel);
+  fs.mkdirSync(path.dirname(out), { recursive: true });
+  fs.rmSync(out, { force: true });
+  const dir = path.join(DATA, 'logs', p.id);
+  fs.mkdirSync(dir, { recursive: true });
+  const log = `${now().replace(/[:.]/g, '-')}-${t.id}-${label}.log`;
+  const rec = { label: `${t.id}-${label}`, engine: 'app', log, status: 'running', startedAt: now() };
+  t.runs.push(rec); save();
+  say(`▶ [${p.name}] ${rec.label}: npm test (app)`);
+  const t0 = Date.now();
+  return new Promise((resolve) => {
+    let text = '';
+    const child = spawn('npm', ['test', '--', '--json', `--outputFile=${out}`], { cwd: wt, env: { ...process.env, CI: 'true' }, stdio: ['ignore', 'pipe', 'pipe'], detached: true });
+    job.child = child; // so Stop kills the test run too
+    const timer = setTimeout(() => { text += '\n[timeout: killed]\n'; killTree(child); }, TEST_TIMEOUT_MS);
+    const keep = (d) => { text = (text + d).slice(-200_000); };
+    child.stdout.on('data', keep); child.stderr.on('data', keep);
+    child.on('error', (e) => keep(`\n[spawn error] ${e.message}\n`));
+    child.on('close', (code) => {
+      clearTimeout(timer); job.child = null;
+      fs.writeFileSync(path.join(dir, log), `$ npm test -- --json --outputFile=${rel}\n\n${text}\n[exit ${code}]\n`);
+      let json = null;
+      try { json = JSON.parse(fs.readFileSync(out, 'utf8')); } catch { /* no or invalid result file: the suite did not run */ }
+      const output = text.slice(-8000);
+      const r = json ? { ran: true, failing: jestFailures(json, wt), output, error: null } : { ran: false, failing: [], output, error: output.slice(-3000) || `npm test exited ${code} without results` };
+      Object.assign(rec, { status: job.stopped ? 'stopped' : r.ran ? 'ok' : 'error', exit: code, durationMs: Date.now() - t0 });
+      say(`■ [${p.name}] ${rec.label} ${r.ran ? `ran: ${r.failing.length} failing` : 'could not run'}`);
+      save();
+      resolve(r);
+    });
+  });
+}
+
 async function runBeTicket(p, t, job) {
   let wt;
   try { wt = beWorktree(p, t); } catch (e) { return block(p, t, `Could not prepare this ticket's workspace: ${e.message}`); }
@@ -811,27 +847,18 @@ async function runBeTicket(p, t, job) {
   const holdFor = (role) => state.teaBreak ? 'Paused for the team tea break'
     : state.breaks[role] ? `Waiting: ${NICK[role]} is on a break`
     : engineHold(engineOf(role));
-  const codex = (label, prompt, reportFile) => agentRun(p, t, label, 'codex', ['exec', '--json', '--ignore-rules', '-c', 'sandbox_workspace_write.network_access=true', '-C', wt, '-s', 'workspace-write', '-o', reportFile, prompt], job, wt, null, 'be-qa'); // network: tests reach local Postgres/Redis
+  // No network for Quinn: the app already ran the tests (runTests); Quinn only reviews.
+  const codex = (label, prompt, reportFile) => agentRun(p, t, label, 'codex', ['exec', '--json', '--ignore-rules', '-C', wt, '-s', 'workspace-write', '-o', reportFile, prompt], job, wt, null, 'be-qa');
 
-  // Baseline: the suite once on the clean branch (= origin/main), so QA fails the ticket only for new failures.
+  // Baseline: the app runs the suite once on the clean branch (= origin/main), so only new failures count.
   if (!t.baseline) {
-    const hold = holdFor('be-qa');
-    if (hold) return park('QA', hold); // parked as QA so the scheduler waits for Quinn; baseline still runs first
-    Object.assign(t, { status: 'QA', note: 'Baseline test run on clean main' }); save();
-    fs.mkdirSync(path.join(wt, p.planDir), { recursive: true });
-    fs.rmSync(ai('baseline.json'), { force: true });
-    const reportFile = path.join(DATA, 'logs', p.id, `${t.id}-baseline-${Date.now()}.report.md`);
-    const prompt = `${agentBody('be-qa')}\n\n---\nBaseline run for Jira ticket ${t.id} (${p.repo}). This workspace is the clean branch, equal to origin/main; nobody has changed it.\n` +
-      `Find the repo's real test command (package.json scripts, README) and run the full test suite once. Then write ${p.planDir}/baseline.json as ` +
-      '{"ran":true|false,"command":"...","failing":["<suite> > <test>"],"error":null|"..."}. ' +
-      'Set "ran":false with the error if the suite could not run at all (for example a database is down). Edit nothing else. ' + NM_RULE;
-    const r = await codex(`${t.id}-baseline`, prompt, reportFile);
-    if (job.paused) return park('QA', 'Paused for the team tea break (baseline restarts)');
-    if (!r || job.stopped) return block(p, t, 'Stopped by you during the baseline test run.');
-    if (r.limited || r.authFail) return park('QA', engineHold('codex') ?? 'Waiting for Codex');
-    const base = parseBaseline(readAi('baseline.json') ?? '');
-    if (!base.ran) return block(p, t, `Baseline tests could not run on clean main: ${base.error ?? 'unknown error'}. Start what the tests need (DB, Redis), then retry.`);
-    Object.assign(t, { baseline: base, skipDev: false, note: null });
+    if (state.teaBreak) return park('DEV', 'Paused for the team tea break');
+    Object.assign(t, { status: 'IN_PROGRESS', note: 'Baseline test run on clean main' }); save();
+    const r = await runTests(p, t, wt, 'baseline', job);
+    if (job.paused) return park('DEV', 'Paused for the team tea break (baseline restarts)');
+    if (job.stopped) return block(p, t, 'Stopped by you during the baseline test run.');
+    if (!r.ran) return block(p, t, `Baseline tests could not run on clean main:\n${r.error}\n\nStart what the tests need (DB, Redis), then retry.`);
+    Object.assign(t, { baseline: { ran: true, command: 'npm test', failing: r.failing, error: null }, note: null });
     remember(p, t); save();
   }
 
@@ -877,17 +904,35 @@ async function runBeTicket(p, t, job) {
       }
     }
     t.skipDev = false;
-    const hold = holdFor('be-qa');
-    if (hold) return park('QA', hold);
     const qaUnsafe = beUnsafe(p, t, wt, 'QA will not run there');
     if (qaUnsafe) return block(p, t, qaUnsafe);
-    t.status = 'QA'; save();
-    const reportFile = path.join(DATA, 'logs', p.id, `${t.id}-qa-${cycle}-${Date.now()}.report.md`);
+    // The app runs the suite first; new failures go straight back to the dev without spending a QA run.
+    if (state.teaBreak) return park('QA', 'Paused for the team tea break');
+    t.status = 'QA'; t.note = 'App test run'; save();
+    const tests = await runTests(p, t, wt, `tests-${cycle}`, job);
+    if (job.paused) return park('QA', 'Paused for the team tea break (tests restart)');
+    if (job.stopped) return block(p, t, 'Stopped by you during the test run.');
     const failing = t.baseline.failing;
+    const newFailures = tests.failing.filter((f) => !failing.includes(f));
+    if (!tests.ran || newFailures.length) {
+      feedback = !tests.ran ? `The test suite could not run after your change:\n${tests.error}`
+        : `New test failures (not failing on main):\n${newFailures.map((f) => `- ${f}`).join('\n')}\n\nOutput tail:\n${tests.output}`;
+      (t.attempts ??= []).push({ at: now(), kind: 'tests', cycle, verdict: 'FAIL', failing: newFailures });
+      fs.appendFileSync(path.join(DATA, 'logs', p.id, t.runs.at(-1).log), `\n===== feedback to dev =====\n${feedback}\n`);
+      remember(p, t);
+      say(`✗ [${p.name}] ${t.id} app test run: ${tests.ran ? `${newFailures.length} new failure(s)` : 'could not run'} (attempt ${cycle + 1}/${MAX_FIX_CYCLES + 1})`);
+      t.status = 'CHANGES_REQUESTED'; save();
+      continue;
+    }
+    const hold = holdFor('be-qa');
+    if (hold) return park('QA', hold);
+    t.note = null; save();
+    const reportFile = path.join(DATA, 'logs', p.id, `${t.id}-qa-${cycle}-${Date.now()}.report.md`);
     const qaPrompt = `${agentBody('be-qa')}\n\n---\nJira ticket under test: ${t.id} (${p.repo}):\n\n${p.idea}\n\n` +
-      `Baseline failures on clean main (ignore these): ${failing.length ? `\n${failing.map((f) => `- ${f}`).join('\n')}` : 'none'}\n\n` +
+      `App test run (npm test, done by the app outside your sandbox): ${tests.failing.length ? `${tests.failing.length} failing, all already failing on clean main:\n${tests.failing.map((f) => `- ${f}`).join('\n')}` : 'all passing'}.\n\n` +
       `The implementation is the uncommitted change set: inspect it with git status and git diff. The developer's notes are in ${p.planDir}/SUMMARY.md. ` +
-      'Run the real lint, typecheck and test commands, including the existing suite. ' + NM_RULE + ' ' +
+      'Do not run the test suite or anything that needs a database or the network; you may run lint or typecheck if they work offline. ' +
+      'Judge the change against the acceptance criteria and the test results. ' + NM_RULE + ' ' +
       'Do not edit application code or tests. End your reply with exactly one line: VERDICT: PASS, VERDICT: FAIL or VERDICT: BLOCKED.';
     const qa = await codex(`${t.id}-qa-${cycle}`, qaPrompt, reportFile);
     if (job.paused) return park('QA', 'Paused for the team tea break (QA restarts)');

@@ -1,3 +1,5 @@
+import path from 'node:path';
+
 // Pure helpers, kept separate so they can be unit tested.
 
 // Last "VERDICT: X" line wins; a missing verdict counts as BLOCKED, never PASS.
@@ -273,6 +275,17 @@ export function parseBaseline(text) {
   }
 }
 
+// Failing test names from a Jest --json result: "<describe> > <test>", or the suite's repo-relative path when it failed to run.
+export function jestFailures(json, rootDir) {
+  const out = [];
+  for (const r of json?.testResults ?? []) {
+    const failed = (r.assertionResults ?? []).filter((a) => a.status === 'failed');
+    for (const a of failed) out.push([...(a.ancestorTitles ?? []), a.title].join(' > '));
+    if (r.status === 'failed' && !failed.length) out.push(path.relative(rootDir, r.name));
+  }
+  return [...new Set(out)].sort();
+}
+
 export const commitType = (ticketText) => (/^\s*(#+\s*)?(type\s*:?\s*)?bug\b/im.test(ticketText) ? 'fix' : 'feat');
 
 export const ticketTitle = (ticketText) => {
@@ -288,7 +301,7 @@ export function jiraComment({ key, outcome, sections, cycles, baselineFailing, b
   if (outcome === 'no_code') {
     return [`AI Team — ${key}: no code change needed`, block('Findings', body('findings')), block('Steps', body('steps')), open].join('\n\n');
   }
-  const tests = [sections.tests, `- QA (Codex): PASS. Fix cycles: ${cycles}`].filter(Boolean).join('\n');
+  const tests = [sections.tests, '- App test run (npm test): passed, no new failures', `- QA (Codex): PASS. Fix cycles: ${cycles}`].filter(Boolean).join('\n');
   const failing = baselineFailing.length ? baselineFailing.map((f) => `- ${f}`).join('\n') : '- None';
   return [
     `AI Team — ${key} done (QA passed)`,

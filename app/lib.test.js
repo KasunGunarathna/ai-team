@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseVerdict, nextTask, normaliseTasks, normaliseQuestions, secretFiles, formatClaudeEvent, formatCodexEvent, sumUsage, permissionRule, repoForKey, githubTreeUrl, summarySections, parseBaseline, commitType, ticketTitle, jiraComment, poolOf, newestVersion } from './lib.js';
+import { parseVerdict, nextTask, normaliseTasks, normaliseQuestions, secretFiles, formatClaudeEvent, formatCodexEvent, sumUsage, permissionRule, repoForKey, githubTreeUrl, summarySections, parseBaseline, commitType, ticketTitle, jiraComment, poolOf, newestVersion, jestFailures } from './lib.js';
 
 test('parseVerdict takes the last verdict and defaults to BLOCKED', () => {
   assert.equal(parseVerdict('blah\nVERDICT: PASS'), 'PASS');
@@ -203,7 +203,7 @@ test('jiraComment pushed / push_failed / no_code', () => {
   const sections = { 'backend changes': '- added X', 'files changed': '- src/a.ts', tests: '- npm test', 'fe dev notes': 'None', 'open questions / assumptions': '- none' };
   const ok = jiraComment({ key: 'RECK-1', outcome: 'pushed', sections, cycles: 1, baselineFailing: [], branch: 'RECK-1', branchUrl: 'https://github.com/QRTiger/reviewcook-api/tree/RECK-1' });
   assert.match(ok, /^AI Team — RECK-1 done \(QA passed\)/);
-  assert.match(ok, /Fix cycles: 1/);
+  assert.match(ok, /Tests:\n- npm test\n- App test run \(npm test\): passed, no new failures\n- QA \(Codex\): PASS\. Fix cycles: 1\n\n/);
   assert.match(ok, /Already failing on main \(not caused by this change\):\n- None/);
   assert.match(ok, /Branch: https:\/\/github\.com\/QRTiger\/reviewcook-api\/tree\/RECK-1\nMerge: manual$/);
   const bad = jiraComment({ key: 'RECK-1', outcome: 'push_failed', sections, cycles: 0, baselineFailing: ['a > b'], branch: 'RECK-1', branchUrl: null });
@@ -224,4 +224,14 @@ test('newestVersion picks the highest version numerically', () => {
   assert.equal(newestVersion(['7.0.0', '10.1.0', '9.9.9']), '10.1.0');
   assert.equal(newestVersion(['5.2.0']), '5.2.0');
   assert.equal(newestVersion([]), null);
+});
+
+test('jestFailures lists failed tests and suites that failed to run, sorted', () => {
+  const json = { testResults: [
+    { name: '/wt/RECK-1/src/ok.test.ts', status: 'passed', assertionResults: [{ ancestorTitles: ['ok'], title: 'works', status: 'passed' }] },
+    { name: '/wt/RECK-1/src/auth.test.ts', status: 'failed', assertionResults: [{ ancestorTitles: ['auth', 'login'], title: 'rejects bad pw', status: 'failed' }, { ancestorTitles: ['auth', 'login'], title: 'rejects bad pw', status: 'failed' }] },
+    { name: '/wt/RECK-1/src/db.test.ts', status: 'failed', assertionResults: [] },
+  ] };
+  assert.deepEqual(jestFailures(json, '/wt/RECK-1'), ['auth > login > rejects bad pw', 'src/db.test.ts']);
+  assert.deepEqual(jestFailures({}, '/wt'), []);
 });
