@@ -25,6 +25,8 @@
     blocked: () => { tone(247, 0, 0.25, 'sawtooth', 0.07); tone(196, 0.24, 0.4, 'sawtooth', 0.07); }, // low "uh-oh": task blocked
     approval: () => { tone(880, 0, 0.4, 'sine', 0.22); tone(659, 0.32, 0.6, 'sine', 0.22); }, // ding-dong: decision needed
     outage: () => [880, 660, 440, 260].forEach((f, i) => tone(f, i * 0.12, 0.22, 'square', 0.06)), // power-down: limit or login problem
+    handoff: () => { tone(660, 0, 0.08, 'triangle'); tone(880, 0.1, 0.08, 'triangle'); }, // two taps: Captain Plan hands a ticket to a dev
+    pushed: () => { tone(1320, 0, 0.3, 'sine', 0.16); }, // bright ding: a squad branch is pushed (the done arpeggio follows)
     reminder: () => [0, 0.22, 0.44].forEach((at) => tone(988, at, 0.14, 'sine', 0.12)), // soft triple beep: still waiting
   };
 
@@ -33,6 +35,8 @@
   const keys = (S) => ({
     runs: new Set(S.jobs.filter((j) => j.agentLabel).map((j) => `${j.projectId}/${j.agentLabel}`)),
     done: new Set(S.projects.flatMap((p) => p.tasks.filter((t) => t.status === 'DONE').map((t) => `${p.id}/${t.id}`))),
+    dispatched: new Set(S.projects.flatMap((p) => p.tasks.filter((t) => t.dispatchedAt && t.status !== 'TODO').map((t) => `${p.id}/${t.id}/${t.dispatchedAt}`))),
+    pushed: new Set(S.projects.flatMap((p) => p.tasks.filter((t) => t.outcome === 'pushed').map((t) => `${p.id}/${t.id}`))),
     blocked: new Set(S.projects.flatMap((p) => p.tasks.filter((t) => t.status === 'BLOCKED').map((t) => `${p.id}/${t.id}`))),
     pending: new Set(S.projects.flatMap((p) => p.decisions.filter((d) => !d.answer).map((d) => d.id))),
     outages: new Set(['claude', 'codex'].flatMap((e) => [S.authFail?.[e] && `${e}:auth`, S.limits?.[e] > Date.now() && `${e}:limit`]).filter(Boolean)),
@@ -43,8 +47,8 @@
     const cur = keys(S);
     if (prev) {
       const isNew = (k) => [...cur[k]].some((x) => !prev[k].has(x));
-      const events = ['outages', 'pending', 'blocked', 'done', 'runs'].filter(isNew)
-        .map((k) => ({ outages: 'outage', pending: 'approval', blocked: 'blocked', done: 'done', runs: 'start' })[k]);
+      const events = ['outages', 'pending', 'blocked', 'pushed', 'done', 'dispatched', 'runs'].filter(isNew)
+        .map((k) => ({ outages: 'outage', pending: 'approval', blocked: 'blocked', pushed: 'pushed', done: 'done', dispatched: 'handoff', runs: 'start' })[k]);
       events.forEach((name, i) => setTimeout(() => play(name), i * GAP_MS));
       if (events.includes('approval')) lastAlert = Date.now();
     } else {

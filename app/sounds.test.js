@@ -55,3 +55,12 @@ test('sounds: silent when turned off', () => {
   sounds.watch(state({ decisions: [{ id: 'd1' }] }));
   assert.deepEqual(played, []);
 });
+
+test('sounds: squad hand-off when Captain Plan dispatches, and a pushed ding before done', () => {
+  const { sounds, played } = load();
+  sounds.watch(state({ tasks: [{ id: 'RECK-1', status: 'TODO' }] }));
+  sounds.watch(state({ tasks: [{ id: 'RECK-1', status: 'IN_PROGRESS', dispatchedAt: 'x' }] }));
+  assert.deepEqual(played, ['triangle:660']);
+  sounds.watch(state({ tasks: [{ id: 'RECK-1', status: 'DONE', dispatchedAt: 'x', outcome: 'pushed' }] }));
+  assert.deepEqual(played, ['triangle:660', 'sine:1320', DONE]);
+});
