@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { spawn, execFile, execFileSync } from 'node:child_process';
-import { isOpen, limitUntil, parseVerdict, nextTask, readyTasks, normaliseTasks, normaliseQuestions, secretFiles, formatClaudeEvent, formatCodexEvent, sumUsage, permissionRule, clip } from './lib.js';
+import { TASK_ID, isOpen, limitUntil, parseVerdict, nextTask, readyTasks, normaliseTasks, normaliseQuestions, secretFiles, formatClaudeEvent, formatCodexEvent, sumUsage, permissionRule, clip } from './lib.js';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
 const DATA = process.env.AI_TEAM_DATA || path.join(ROOT, 'data');
@@ -138,9 +138,13 @@ async function agentRun(p, owner, label, engine, args, job, cwd = p.path) {
   return { ...r, limited, logPath: path.join(dir, log) };
 }
 
-// User-level settings are skipped so only this app's allow list applies (and no user plugins/hooks burn tokens).
+// Agent config files: a change here could grant tools or hooks to the next agent run, so agents may not touch them.
+const GUARDED = ['.claude', '.codex', '.mcp.json'];
+const NO_CONFIG_WRITES = GUARDED.flatMap((g) => [g, `**/${g}`]).flatMap((g) => [`Write(${g}${g.endsWith('.json') ? '' : '/**'})`, `Edit(${g}${g.endsWith('.json') ? '' : '/**'})`]);
+
+// Only the project's committed settings load (not your personal or .local settings), and only this app's allow list applies.
 const claudeArgs = (agent, prompt, tools) =>
-  ['-p', prompt, '--append-system-prompt', agentBody(agent), '--setting-sources', 'project,local', '--allowedTools', tools.join(','),
+  ['-p', prompt, '--append-system-prompt', agentBody(agent), '--setting-sources', 'project', '--allowedTools', tools.join(','), '--disallowedTools', NO_CONFIG_WRITES.join(','),
     '--permission-mode', 'acceptEdits', '--output-format', 'stream-json', '--verbose'];
 
 function startJob(spec, fn) {
@@ -181,6 +185,7 @@ function addPlanDecision(p) {
 function raiseDenials(p, denials, who) {
   for (const d of denials ?? []) {
     const rule = permissionRule(d);
+    if (!rule) { say(`⛔ [${p.name}] ${who} was denied an unusual command; no allow rule offered: ${clip(d.tool_input?.command ?? d.tool_name, 160)}`); continue; }
     if (p.allowTools.includes(rule) || p.decisions.some((x) => x.kind === 'permission' && x.rule === rule)) continue;
     addDecision(p, {
       kind: 'permission', rule,
@@ -251,8 +256,21 @@ function integrationDir(p) {
   return dir;
 }
 
+function taskWorktree(p, t) {
+  const base = path.join(WT, p.id), dir = path.resolve(base, t.id);
+  if (!TASK_ID.test(t.id) || path.dirname(dir) !== base) throw new Error(`unsafe task id ${t.id}`);
+  return dir;
+}
+
+// 1b. Changed agent config in a task workspace (uncommitted, or committed on the task branch) blocks the task for a human.
+function configChanges(p, wt) {
+  const dirty = git(wt, 'status', '--porcelain', '--ignored', '--', ...GUARDED); // --ignored: global gitignores often hide .claude/settings.local.json
+  const committed = git(wt, 'diff', '--name-only', `${p.branch}...HEAD`, '--', ...GUARDED);
+  return [dirty, committed].filter(Boolean).join('\n');
+}
+
 function ensureWorktree(p, t) {
-  const dir = path.join(WT, p.id, t.id);
+  const dir = taskWorktree(p, t);
   if (fs.existsSync(path.join(dir, '.git'))) return dir;
   fs.rmSync(dir, { recursive: true, force: true });
   fs.mkdirSync(path.dirname(dir), { recursive: true });
@@ -266,7 +284,7 @@ function ensureWorktree(p, t) {
 }
 
 function removeWorktree(p, t) {
-  const dir = path.join(WT, p.id, t.id);
+  const dir = taskWorktree(p, t);
   try { git(p.path, 'worktree', 'remove', '--force', dir); } catch { fs.rmSync(dir, { recursive: true, force: true }); }
   try { git(p.path, 'worktree', 'prune'); } catch { /* nothing to prune */ }
   if (branchExists(p, taskBranch(p, t))) git(p.path, 'branch', '-D', taskBranch(p, t));
@@ -418,6 +436,8 @@ async function runTask(p, t, job) {
         (feedback ? `\n\nYour previous attempt was not accepted. Fix every point:\n\n${feedback}` : '') +
         (t.interrupted ? '\n\nYour previous session was interrupted by a break. Continue from the current state of the workspace.' : '');
       t.interrupted = false;
+      const cfg = configChanges(p, wt);
+      if (cfg) return block(p, t, `Agent configuration files were changed in this task's workspace, so no agent will run there until you review them:\n${cfg}\nWorkspace: ${wt}`);
       const dev = await agentRun(p, t, `${t.id}-dev-${cycle}`, 'claude', claudeArgs(t.owner, devPrompt, [...DEV_TOOLS, ...p.allowTools]), job, wt);
       if (job.paused) { t.interrupted = true; return park('DEV', 'Paused for the team tea break'); }
       if (!dev || job.stopped) return block(p, t, 'Stopped by you during development.');
@@ -447,6 +467,8 @@ async function runTask(p, t, job) {
       git(wt, 'add', '-A');
       const secrets = secretFiles(git(wt, 'diff', '--cached', '--name-only').split('\n'));
       if (secrets.length) { git(wt, 'reset', '-q'); return block(p, t, `QA passed but secret-like files were created: ${secrets.join(', ')}. Add them to .gitignore, then choose "Retry, keeping this task's work".`); }
+      const cfg = configChanges(p, wt);
+      if (cfg) { git(wt, 'reset', '-q'); return block(p, t, `QA passed, but agent configuration files were changed, so this task will not be merged until you review them:\n${cfg}\nWorkspace: ${wt}`); }
       git(wt, 'commit', '-q', '--allow-empty', '-m', `feat(${t.id}): ${t.title}\n\nQA: PASS (Codex), fix cycles: ${cycle}`);
       let merged;
       try { merged = mergeTask(p, t, wt); } catch (e) { return block(p, t, e.message); }

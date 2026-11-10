@@ -14,12 +14,19 @@ export function readyTasks(tasks) {
 export const nextTask = (tasks) => readyTasks(tasks)[0];
 
 // Normalise the PM/BA agent's tasks.json into the orchestrator's task shape.
+// Task ids become branch and folder names, so they must be plain and unique.
+export const TASK_ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
 export function normaliseTasks(raw) {
   if (!Array.isArray(raw) || raw.length === 0) throw new Error('tasks.json must be a non-empty array');
+  const seen = new Set();
   return raw.map((t) => {
     if (!t || !t.id || !t.title) throw new Error('each task needs id and title');
+    const id = String(t.id);
+    if (!TASK_ID.test(id)) throw new Error(`invalid task id "${id.slice(0, 40)}" (letters, digits, - and _ only, starting with a letter or digit)`);
+    if (seen.has(id)) throw new Error(`duplicate task id ${id}`);
+    seen.add(id);
     return {
-      id: String(t.id).replace(/[^\w-]/g, ''),
+      id,
       title: String(t.title),
       phase: Number(t.phase) || 1,
       owner: t.owner === 'frontend-dev' ? 'frontend-dev' : 'backend-dev',
@@ -112,12 +119,17 @@ export function sumUsage(list) {
   return total;
 }
 
-// A denied tool call -> the allow rule that would permit similar calls.
+// A denied tool call -> a narrow allow rule for similar calls, or null when no safe rule exists.
+// Built from the real leading words only; shell operators, flags or odd characters mean "no suggestion".
+const SUBCOMMAND_TOOLS = ['git', 'npm', 'npx', 'pnpm', 'yarn', 'docker'];
 export function permissionRule(d) {
-  if (d.tool_name !== 'Bash') return d.tool_name;
-  const words = String(d.tool_input?.command ?? '').trim().split(/\s+/).filter((w) => /^[\w@./:=-]+$/.test(w));
-  const n = ['git', 'npm', 'npx', 'pnpm', 'yarn', 'docker'].includes(words[0]) ? 2 : 1;
-  return words.length ? `Bash(${words.slice(0, n).join(' ')}:*)` : 'Bash';
+  if (d.tool_name !== 'Bash') return /^[A-Za-z][\w-]*$/.test(d.tool_name ?? '') ? d.tool_name : null;
+  const cmd = String(d.tool_input?.command ?? '').trim();
+  if (!cmd || /[;&|`$<>(){}\\\n]/.test(cmd)) return null;
+  const [first, second] = cmd.split(/\s+/);
+  if (!/^[a-z][\w.-]*$/i.test(first)) return null;
+  if (!SUBCOMMAND_TOOLS.includes(first)) return `Bash(${first}:*)`;
+  return second && /^[a-z][\w:.-]*$/i.test(second) ? `Bash(${first} ${second}:*)` : null;
 }
 
 // ---------- usage limits ----------

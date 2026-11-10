@@ -17,10 +17,14 @@ test('nextTask respects dependencies and order', () => {
 });
 
 test('normaliseTasks validates and defaults', () => {
-  const [x] = normaliseTasks([{ id: 'TASK-001/../x', title: 'Login', owner: 'devops' }]);
-  assert.deepEqual(x, { id: 'TASK-001x', title: 'Login', phase: 1, owner: 'backend-dev', dependsOn: [], status: 'BACKLOG', cycles: 0, runs: [] });
+  const [x] = normaliseTasks([{ id: 'TASK-001', title: 'Login', owner: 'devops' }]);
+  assert.deepEqual(x, { id: 'TASK-001', title: 'Login', phase: 1, owner: 'backend-dev', dependsOn: [], status: 'BACKLOG', cycles: 0, runs: [] });
   assert.throws(() => normaliseTasks([]));
   assert.throws(() => normaliseTasks([{ id: 'A' }]));
+  assert.throws(() => normaliseTasks([{ id: 'TASK-001/../x', title: 't' }]), /invalid task id/);
+  assert.throws(() => normaliseTasks([{ id: '_integration', title: 't' }]), /invalid task id/);
+  assert.throws(() => normaliseTasks([{ id: '!!', title: 't' }]), /invalid task id/);
+  assert.throws(() => normaliseTasks([{ id: 'A', title: 't' }, { id: 'A', title: 'u' }]), /duplicate/);
 });
 
 test('normaliseQuestions drops invalid entries', () => {
@@ -55,11 +59,19 @@ test('sumUsage ignores missing entries', () => {
   assert.deepEqual(sumUsage([null, { input: 1, output: 2, cacheRead: 3, cacheWrite: 4, costUsd: 0.1 }, undefined]), { input: 1, output: 2, cacheRead: 3, cacheWrite: 4, costUsd: 0.1 });
 });
 
-test('permissionRule builds narrow allow rules', () => {
-  assert.equal(permissionRule({ tool_name: 'Bash', tool_input: { command: 'docker compose up -d' } }), 'Bash(docker compose:*)');
-  assert.equal(permissionRule({ tool_name: 'Bash', tool_input: { command: 'curl -s http://x' } }), 'Bash(curl:*)');
-  assert.equal(permissionRule({ tool_name: 'Bash', tool_input: { command: '$(evil)' } }), 'Bash');
+test('permissionRule builds narrow allow rules and refuses unsafe ones', () => {
+  const rule = (command) => permissionRule({ tool_name: 'Bash', tool_input: { command } });
+  assert.equal(rule('docker compose up -d'), 'Bash(docker compose:*)');
+  assert.equal(rule('curl -s http://x'), 'Bash(curl:*)');
+  assert.equal(rule('$(evil)'), null);
+  assert.equal(rule('git -c core.sshCommand=evil push'), null); // never "Bash(git -c:*)"
+  assert.equal(rule('npm --prefix /tmp run x'), null);
+  assert.equal(rule('ls && rm -rf ~'), null);
+  assert.equal(rule('echo `id`'), null);
+  assert.equal(rule('/bin/sh -c id'), null);
+  assert.equal(rule('git'), null);
   assert.equal(permissionRule({ tool_name: 'WebFetch', tool_input: {} }), 'WebFetch');
+  assert.equal(permissionRule({ tool_name: 'Bash(x)', tool_input: {} }), null);
 });
 
 test('limitUntil detects usage limits only on failed runs', async () => {
