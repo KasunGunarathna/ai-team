@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseVerdict, nextTask, normaliseTasks, normaliseQuestions, secretFiles, formatClaudeEvent, formatCodexEvent, sumUsage, permissionRule, repoForKey, githubTreeUrl, summarySections, parseBaseline, commitType, ticketTitle, jiraComment, poolOf, newestVersion, jestFailures, isTestHarness } from './lib.js';
+import { parseVerdict, nextTask, normaliseTasks, normaliseQuestions, secretFiles, formatClaudeEvent, formatCodexEvent, sumUsage, permissionRule, repoForKey, githubTreeUrl, summarySections, parseBaseline, commitType, ticketTitle, jiraComment, poolOf, newestVersion, jestFailures, isTestHarness, prLinkFromPush, squadNext } from './lib.js';
 
 test('parseVerdict takes the last verdict and defaults to BLOCKED', () => {
   assert.equal(parseVerdict('blah\nVERDICT: PASS'), 'PASS');
@@ -239,4 +239,25 @@ test('jestFailures lists failed tests and suites that failed to run, sorted', ()
 test('isTestHarness flags files that control how tests run', () => {
   for (const f of ['package.json', 'jest.config.ts', 'api/jest.setup.js', 'src/setupTests.ts', 'babel.config.js', '.babelrc', 'tsconfig.json', '__mocks__/db.js', 'tests/setup/test-db.js', 'test/globalSetup.ts', '.npmrc', 'api/.yarnrc.yml', 'vitest.config.ts', '.mocharc.json']) assert.ok(isTestHarness(f), f);
   for (const f of ['src/gift.ts', 'tests/gift.test.js', 'README.md']) assert.ok(!isTestHarness(f), f);
+});
+
+test('prLinkFromPush takes the GitHub pull/new link, else a compare link', () => {
+  assert.equal(prLinkFromPush('remote: Create a pull request for \'RECK-9\' on GitHub by visiting:\nremote:      https://github.com/QRTiger/reviewcook-api/pull/new/RECK-9\n', 'https://github.com/QRTiger/reviewcook-api.git', 'RECK-9'), 'https://github.com/QRTiger/reviewcook-api/pull/new/RECK-9');
+  assert.equal(prLinkFromPush('', 'https://kasun-gx@github.com/QRTiger/giftlips-api.git', 'GIF-1'), 'https://github.com/QRTiger/giftlips-api/compare/main...GIF-1?expand=1');
+  assert.equal(prLinkFromPush('', 'https://gitlab.com/x/y.git', 'b'), null);
+});
+
+test('squadNext: resumed tickets first, then priority, then queue order; busy owners skipped', () => {
+  const free = (busy = []) => (role) => !busy.includes(role);
+  const T = (id, status, owner, queuedAt, extra = {}) => ({ id, status, owner, queuedAt, ...extra });
+  assert.equal(squadNext([T('A', 'TODO', 'rc-dev', 1), T('B', 'READY', 'rc-dev', 9)], free()).id, 'B');
+  assert.equal(squadNext([T('A', 'TODO', 'rc-dev', 1), T('B', 'TODO', 'rc-dev', 2, { priority: 5 })], free()).id, 'B');
+  assert.equal(squadNext([T('A', 'TODO', 'rc-dev', 1), T('B', 'TODO', 'gl-dev', 2)], free(['rc-dev'])).id, 'B');
+  assert.equal(squadNext([T('A', 'READY', 'rc-dev', 1, { skipDev: true })], free(['be-qa'])), undefined);
+  assert.equal(squadNext([T('A', 'DONE', 'rc-dev', 1), T('B', 'BLOCKED', 'rc-dev', 2)], free()), undefined);
+});
+
+test('jiraComment adds the Create PR line before Merge', () => {
+  const c = jiraComment({ key: 'RECK-1', outcome: 'pushed', sections: {}, cycles: 0, baselineFailing: [], branch: 'RECK-1', branchUrl: 'https://github.com/o/r/tree/RECK-1', prUrl: 'https://github.com/o/r/pull/new/RECK-1' });
+  assert.match(c, /Branch: https:\/\/github\.com\/o\/r\/tree\/RECK-1\nCreate PR: https:\/\/github\.com\/o\/r\/pull\/new\/RECK-1\nMerge: manual$/);
 });

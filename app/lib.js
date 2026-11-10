@@ -245,9 +245,28 @@ export const BE_PREFIXES = { 'RECK-': 'reviewcook-api', 'GIF-': 'giftlips-api' }
 export const repoForKey = (key) => BE_PREFIXES[Object.keys(BE_PREFIXES).find((p) => String(key).startsWith(p))] ?? null;
 
 // Git remote + branch -> GitHub web link, or null if the remote is not GitHub.
+const githubRepo = (remote) => String(remote).trim().match(/^(?:https:\/\/(?:[^@/]+@)?github\.com\/|git@github\.com:)([^/]+)\/([^/]+?)(?:\.git)?\/?$/);
+const encBranch = (branch) => String(branch).split('/').map(encodeURIComponent).join('/');
 export function githubTreeUrl(remote, branch) {
-  const m = String(remote).trim().match(/^(?:https:\/\/(?:[^@/]+@)?github\.com\/|git@github\.com:)([^/]+)\/([^/]+?)(?:\.git)?\/?$/);
-  return m ? `https://github.com/${m[1]}/${m[2]}/tree/${String(branch).split('/').map(encodeURIComponent).join('/')}` : null;
+  const m = githubRepo(remote);
+  return m ? `https://github.com/${m[1]}/${m[2]}/tree/${encBranch(branch)}` : null;
+}
+
+// "Create PR" link: GitHub prints one on the first push of a branch; otherwise the compare page with the PR form.
+export function prLinkFromPush(stderr, remote, branch) {
+  const printed = String(stderr ?? '').match(/https:\/\/github\.com\/[^\s]+\/pull\/new\/[^\s]+/);
+  if (printed) return printed[0];
+  const m = githubRepo(remote);
+  return m ? `https://github.com/${m[1]}/${m[2]}/compare/main...${encBranch(branch)}?expand=1` : null;
+}
+
+// Captain Plan's dispatch order: resumed (READY) tickets first, then TODO by priority, then by when they were queued.
+export function squadNext(tickets, isFree) {
+  const free = (t) => isFree(t.skipDev ? 'be-qa' : t.owner);
+  const ready = tickets.filter((t) => t.status === 'READY' && free(t));
+  if (ready.length) return ready[0];
+  return tickets.filter((t) => t.status === 'TODO' && free(t))
+    .sort((a, b) => (b.priority ?? 0) - (a.priority ?? 0) || (a.queuedAt ?? 0) - (b.queuedAt ?? 0))[0];
 }
 
 // Markdown -> { "heading lowercased": "trimmed body" } for each "## heading".
@@ -298,7 +317,7 @@ export const ticketTitle = (ticketText) => {
 };
 
 // Plain-text Jira comment; layout is fixed by the design spec ("Jira comment format").
-export function jiraComment({ key, outcome, sections, cycles, baselineFailing, branch, branchUrl }) {
+export function jiraComment({ key, outcome, sections, cycles, baselineFailing, branch, branchUrl, prUrl }) {
   const body = (name) => sections[name] || '- None';
   const block = (title, text) => `${title}:\n${text}`;
   const open = block('Open questions / assumptions', body('open questions / assumptions'));
@@ -315,7 +334,7 @@ export function jiraComment({ key, outcome, sections, cycles, baselineFailing, b
     block('FE dev notes', body('fe dev notes')),
     open,
     block('Already failing on main (not caused by this change)', failing),
-    `Branch: ${outcome === 'pushed' ? branchUrl : `${branch} (not pushed yet)`}\nMerge: manual`,
+    `Branch: ${outcome === 'pushed' ? branchUrl : `${branch} (not pushed yet)`}${prUrl ? `\nCreate PR: ${prUrl}` : ''}\nMerge: manual`,
   ].join('\n\n');
 }
 
