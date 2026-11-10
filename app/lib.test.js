@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseVerdict, nextTask, normaliseTasks, normaliseQuestions, secretFiles, formatClaudeEvent, formatCodexEvent, sumUsage, permissionRule } from './lib.js';
+import { parseVerdict, nextTask, normaliseTasks, normaliseQuestions, secretFiles, formatClaudeEvent, formatCodexEvent, sumUsage, permissionRule, repoForKey, githubTreeUrl, summarySections, parseBaseline, commitType, ticketTitle, jiraComment } from './lib.js';
 
 test('parseVerdict takes the last verdict and defaults to BLOCKED', () => {
   assert.equal(parseVerdict('blah\nVERDICT: PASS'), 'PASS');
@@ -162,4 +162,54 @@ test('parseFigmaUrl accepts figma file/frame links only', async () => {
   assert.equal(parseFigmaUrl('https://evil.com/design/AbCdEf1234567890/X'), null);
   assert.equal(parseFigmaUrl('https://figma.com.evil.com/design/AbCdEf1234567890/X'), null);
   assert.equal(parseFigmaUrl('not a url'), null);
+});
+
+test('repoForKey maps Jira prefixes', () => {
+  assert.equal(repoForKey('RECK-12'), 'reviewcook-api');
+  assert.equal(repoForKey('GIF-1824'), 'giftlips-api');
+  assert.equal(repoForKey('MINT-1'), null);
+  assert.equal(repoForKey('RECKX-1'), null);
+});
+
+test('githubTreeUrl handles https, user@ and ssh remotes', () => {
+  assert.equal(githubTreeUrl('https://kasun-gx@github.com/QRTiger/giftlips-api.git', 'GIF-1'), 'https://github.com/QRTiger/giftlips-api/tree/GIF-1');
+  assert.equal(githubTreeUrl('https://github.com/QRTiger/reviewcook-api.git', 'RECK-9'), 'https://github.com/QRTiger/reviewcook-api/tree/RECK-9');
+  assert.equal(githubTreeUrl('git@github.com:QRTiger/reviewcook-api.git', 'a/b'), 'https://github.com/QRTiger/reviewcook-api/tree/a/b');
+  assert.equal(githubTreeUrl('https://gitlab.com/x/y.git', 'b'), null);
+  assert.equal(githubTreeUrl('https://github.com/O/R', 'a b/c#d'), 'https://github.com/O/R/tree/a%20b/c%23d');
+});
+
+test('summarySections splits on ## headings', () => {
+  const s = summarySections('# Title\n## Backend changes\n- a\n\n## FE dev notes\nNone\n');
+  assert.equal(s['backend changes'], '- a');
+  assert.equal(s['fe dev notes'], 'None');
+});
+
+test('parseBaseline validates', () => {
+  assert.deepEqual(parseBaseline('{"ran":true,"command":"npm test","failing":["x > y"]}'), { ran: true, command: 'npm test', failing: ['x > y'], error: null });
+  assert.equal(parseBaseline('nope').ran, false);
+  assert.equal(parseBaseline('null').error, 'baseline.json missing or invalid');
+  assert.equal(parseBaseline('{"ran":false,"error":"ECONNREFUSED 5432"}').error, 'ECONNREFUSED 5432');
+});
+
+test('commitType and ticketTitle', () => {
+  assert.equal(commitType('## Type\nBug\n'), 'fix');
+  assert.equal(commitType('Type: Story'), 'feat');
+  assert.equal(ticketTitle('\n# RECK-12: Fix login timeout\nmore'), 'Fix login timeout');
+  assert.equal(ticketTitle('x'.repeat(100)).length, 72);
+});
+
+test('jiraComment pushed / push_failed / no_code', () => {
+  const sections = { 'backend changes': '- added X', 'files changed': '- src/a.ts', tests: '- npm test', 'fe dev notes': 'None', 'open questions / assumptions': '- none' };
+  const ok = jiraComment({ key: 'RECK-1', outcome: 'pushed', sections, cycles: 1, baselineFailing: [], branch: 'RECK-1', branchUrl: 'https://github.com/QRTiger/reviewcook-api/tree/RECK-1' });
+  assert.match(ok, /^AI Team — RECK-1 done \(QA passed\)/);
+  assert.match(ok, /Fix cycles: 1/);
+  assert.match(ok, /Already failing on main \(not caused by this change\):\n- None/);
+  assert.match(ok, /Branch: https:\/\/github\.com\/QRTiger\/reviewcook-api\/tree\/RECK-1\nMerge: manual$/);
+  const bad = jiraComment({ key: 'RECK-1', outcome: 'push_failed', sections, cycles: 0, baselineFailing: ['a > b'], branch: 'RECK-1', branchUrl: null });
+  assert.match(bad, /Branch: RECK-1 \(not pushed yet\)/);
+  assert.match(bad, /- a > b/);
+  const nc = jiraComment({ key: 'GIF-2', outcome: 'no_code', sections: { findings: '- data issue', steps: '1. run X' }, cycles: 0, baselineFailing: [], branch: null, branchUrl: null });
+  assert.match(nc, /^AI Team — GIF-2: no code change needed\n\nFindings:\n- data issue\n\nSteps:\n1\. run X/);
+  assert.doesNotMatch(nc, /Branch:/);
 });

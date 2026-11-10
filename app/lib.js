@@ -237,3 +237,67 @@ export function parseFigmaUrl(raw) {
   const node = u.searchParams.get('node-id');
   return { key: m[1], nodeId: node && /^\d+[-:]\d+$/.test(node) ? node.replace('-', ':') : null, url: u.toString() };
 }
+
+// --- Backend ticket team ---
+export const BE_PREFIXES = { 'RECK-': 'reviewcook-api', 'GIF-': 'giftlips-api' };
+export const repoForKey = (key) => BE_PREFIXES[Object.keys(BE_PREFIXES).find((p) => String(key).startsWith(p))] ?? null;
+
+// Git remote + branch -> GitHub web link, or null if the remote is not GitHub.
+export function githubTreeUrl(remote, branch) {
+  const m = String(remote).trim().match(/^(?:https:\/\/(?:[^@/]+@)?github\.com\/|git@github\.com:)([^/]+)\/([^/]+?)(?:\.git)?\/?$/);
+  return m ? `https://github.com/${m[1]}/${m[2]}/tree/${String(branch).split('/').map(encodeURIComponent).join('/')}` : null;
+}
+
+// Markdown -> { "heading lowercased": "trimmed body" } for each "## heading".
+export function summarySections(md) {
+  const out = {};
+  for (const part of String(md).split(/^##[ \t]+/m).slice(1)) {
+    const nl = part.indexOf('\n');
+    out[(nl < 0 ? part : part.slice(0, nl)).trim().toLowerCase()] = nl < 0 ? '' : part.slice(nl + 1).trim();
+  }
+  return out;
+}
+
+export function parseBaseline(text) {
+  try {
+    const o = JSON.parse(text);
+    if (!o || typeof o !== 'object') throw new Error('shape');
+    return {
+      ran: o.ran === true,
+      command: typeof o.command === 'string' ? o.command : '',
+      failing: Array.isArray(o.failing) ? o.failing.filter((f) => typeof f === 'string') : [],
+      error: typeof o.error === 'string' ? o.error : null,
+    };
+  } catch {
+    return { ran: false, command: '', failing: [], error: 'baseline.json missing or invalid' };
+  }
+}
+
+export const commitType = (ticketText) => (/^\s*(#+\s*)?(type\s*:?\s*)?bug\b/im.test(ticketText) ? 'fix' : 'feat');
+
+export const ticketTitle = (ticketText) => {
+  const line = String(ticketText).split('\n').find((l) => l.trim()) ?? '';
+  return line.replace(/^\s*#+\s*/, '').replace(/^[A-Z][A-Z0-9]*-\d+\s*:?\s*/, '').trim().slice(0, 72);
+};
+
+// Plain-text Jira comment; layout is fixed by the design spec ("Jira comment format").
+export function jiraComment({ key, outcome, sections, cycles, baselineFailing, branch, branchUrl }) {
+  const body = (name) => sections[name] || '- None';
+  const block = (title, text) => `${title}:\n${text}`;
+  const open = block('Open questions / assumptions', body('open questions / assumptions'));
+  if (outcome === 'no_code') {
+    return [`AI Team — ${key}: no code change needed`, block('Findings', body('findings')), block('Steps', body('steps')), open].join('\n\n');
+  }
+  const tests = [sections.tests, `- QA (Codex): PASS. Fix cycles: ${cycles}`].filter(Boolean).join('\n');
+  const failing = baselineFailing.length ? baselineFailing.map((f) => `- ${f}`).join('\n') : '- None';
+  return [
+    `AI Team — ${key} done (QA passed)`,
+    block('Backend changes', body('backend changes')),
+    block('Files changed', body('files changed')),
+    block('Tests', tests),
+    block('FE dev notes', body('fe dev notes')),
+    open,
+    block('Already failing on main (not caused by this change)', failing),
+    `Branch: ${outcome === 'pushed' ? branchUrl : `${branch} (not pushed yet)`}\nMerge: manual`,
+  ].join('\n\n');
+}
