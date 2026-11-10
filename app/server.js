@@ -384,9 +384,9 @@ function taskWorktree(p, t) {
 }
 
 // 1b. Changed agent config in a task workspace (uncommitted, or committed on the task branch) blocks the task for a human.
-function configChanges(p, wt) {
+function configChanges(p, wt, base = p.branch) {
   const dirty = git(wt, 'status', '--porcelain', '--ignored', '--', ...GUARDED); // --ignored: global gitignores often hide .claude/settings.local.json
-  const committed = git(wt, 'diff', '--name-only', `${p.branch}...HEAD`, '--', ...GUARDED);
+  const committed = git(wt, 'diff', '--name-only', `${base}...HEAD`, '--', ...GUARDED);
   return [dirty, committed].filter(Boolean).join('\n');
 }
 
@@ -715,7 +715,9 @@ function removeBeWorktree(p, t) {
   try { git(p.path, 'worktree', 'remove', '--force', dir); } catch { fs.rmSync(dir, { recursive: true, force: true }); }
   try { git(p.path, 'worktree', 'prune'); } catch { /* nothing to prune */ }
   const b = t.ownBranch;
-  if (b && branchExists(p, b) && git(p.path, 'rev-list', '--count', `origin/main..${b}`) === '0') { git(p.path, 'branch', '-D', b); t.ownBranch = null; }
+  if (b && branchExists(p, b) && git(p.path, 'rev-list', '--count', `origin/main..${b}`) === '0') {
+    try { git(p.path, 'branch', '-D', b); t.ownBranch = null; } catch (e) { say(`⚠ [${p.name}] could not delete empty branch ${b}: ${clip(e.stderr || e.message, 300)}`); }
+  }
 }
 
 function pushBranch(p) {
@@ -741,12 +743,24 @@ function finishBe(p, t, outcome, extra = {}) {
   return true;
 }
 
+// Why agents may not run (or the app may not commit) in a BE workspace, or null. Checks files committed since t.baseSha too:
+// HEAD is the ticket branch itself, and an agent can reach git through node/npx.
+function beUnsafe(p, t, wt, when) {
+  const cfg = configChanges(p, wt, t.baseSha);
+  if (cfg) return `Agent configuration files were changed in this ticket's workspace (committed or not), so ${when} until you review them:\n${cfg}\nWorkspace: ${wt}`;
+  const files = [git(wt, 'diff', '--name-only', `${t.baseSha}..HEAD`), git(wt, 'diff', '--name-only', 'HEAD'), git(wt, 'ls-files', '--others', '--exclude-standard')].join('\n').split('\n').filter(Boolean);
+  const secrets = [...new Set(secretFiles(files))];
+  return secrets.length ? `Secret-like files are in this ticket's workspace (committed or not), so ${when}: ${secrets.join(', ')}. Remove them or add them to .gitignore, then retry. Workspace: ${wt}` : null;
+}
+const NM_RULE = 'node_modules is a link to the owner\'s install: never write, edit or delete anything inside it; to change dependencies run exactly `rm node_modules` first, then the clean install.';
+
 async function runBeTicket(p, t, job) {
   let wt;
   try { wt = beWorktree(p, t); } catch (e) { return block(p, t, `Could not prepare this ticket's workspace: ${e.message}`); }
   remember(p, t);
   const ai = (f) => path.join(wt, p.planDir, f);
   const readAi = (f) => (fs.existsSync(ai(f)) ? fs.readFileSync(ai(f), 'utf8') : null);
+  const keepAi = (f) => (fs.existsSync(ai(f)) ? clip(readAi(f), 20_000) : null); // stored on t and in memory
   let feedback = t.feedback || '';
   // Same as runTask: hand the ticket back to the queue without counting a failure; work stays in its worktree.
   const park = (stage, note) => {
@@ -758,7 +772,7 @@ async function runBeTicket(p, t, job) {
   const holdFor = (role) => state.teaBreak ? 'Paused for the team tea break'
     : state.breaks[role] ? `Waiting: ${NICK[role]} is on a break`
     : engineHold(engineOf(role));
-  const codex = (label, prompt, reportFile) => agentRun(p, t, label, 'codex', ['exec', '--json', '--ignore-rules', '-C', wt, '-s', 'workspace-write', '-o', reportFile, prompt], job, wt, null, 'be-qa');
+  const codex = (label, prompt, reportFile) => agentRun(p, t, label, 'codex', ['exec', '--json', '--ignore-rules', '-c', 'sandbox_workspace_write.network_access=true', '-C', wt, '-s', 'workspace-write', '-o', reportFile, prompt], job, wt, null, 'be-qa'); // network: tests reach local Postgres/Redis
 
   // Baseline: the suite once on the clean branch (= origin/main), so QA fails the ticket only for new failures.
   if (!t.baseline) {
@@ -771,7 +785,7 @@ async function runBeTicket(p, t, job) {
     const prompt = `${agentBody('be-qa')}\n\n---\nBaseline run for Jira ticket ${t.id} (${p.repo}). This workspace is the clean branch, equal to origin/main; nobody has changed it.\n` +
       `Find the repo's real test command (package.json scripts, README) and run the full test suite once. Then write ${p.planDir}/baseline.json as ` +
       '{"ran":true|false,"command":"...","failing":["<suite> > <test>"],"error":null|"..."}. ' +
-      'Set "ran":false with the error if the suite could not run at all (for example a database is down). Edit nothing else.';
+      'Set "ran":false with the error if the suite could not run at all (for example a database is down). Edit nothing else. ' + NM_RULE;
     const r = await codex(`${t.id}-baseline`, prompt, reportFile);
     if (job.paused) return park('QA', 'Paused for the team tea break (baseline restarts)');
     if (!r || job.stopped) return block(p, t, 'Stopped by you during the baseline test run.');
@@ -791,15 +805,15 @@ async function runBeTicket(p, t, job) {
       t.status = 'IN_PROGRESS'; save();
       const devPrompt = `Jira ticket ${t.id} for ${p.repo}:\n\n${p.idea}\n\n` +
         'No human is in the loop: never ask, decide yourself, and write every unclear point under "Open questions / assumptions". ' +
-        `Write your plan to ${p.planDir}/PLAN.md before coding, and ${p.planDir}/SUMMARY.md when finished. Do not commit.` +
+        `Write your plan to ${p.planDir}/PLAN.md before coding, and ${p.planDir}/SUMMARY.md when finished. Do not commit. ${NM_RULE}` +
         `\n\nPast tickets in this repo:\n${pastTickets(p.repo) || '(none yet)'}` +
         (t.instructions ? `\n\nInstructions from the product owner for this ticket:\n${t.instructions}` : '') +
         (feedback ? `\n\nYour previous attempt was not accepted. Fix every point:\n\n${feedback}` : '') +
         (t.interrupted ? '\n\nYour previous session was interrupted by a break. Continue from the current state of the workspace.' : '') +
         (t.handoff ? `\n\nYour previous session ran out of context and this is a fresh one. Do not redo finished work. Memory from that session:\n\n${t.handoff}` : '');
       t.interrupted = false; t.handoff = null;
-      const cfg = configChanges(p, wt);
-      if (cfg) return block(p, t, `Agent configuration files were changed in this ticket's workspace, so no agent will run there until you review them:\n${cfg}\nWorkspace: ${wt}`);
+      const unsafe = beUnsafe(p, t, wt, 'no agent will run there');
+      if (unsafe) return block(p, t, unsafe);
       const tools = [...DEV_TOOLS, 'Skill', 'Bash(rm node_modules)', ...p.allowTools];
       const dev = await agentRun(p, t, `${t.id}-dev-${cycle}${handoffs ? `-s${handoffs + 1}` : ''}`, 'claude', claudeArgs(t.owner, devPrompt, tools, PLUGIN_DIRS.flatMap((d) => ['--plugin-dir', d])), job, wt, HANDOFF_AT);
       if (job.paused) { t.interrupted = true; return park('DEV', 'Paused for the team tea break'); }
@@ -813,9 +827,10 @@ async function runBeTicket(p, t, job) {
         t.handoff = clip(`What it said last:\n${(dev.notes ?? []).join('\n---\n')}\n\nFiles changed so far (git status):\n${git(wt, 'status', '--short') || '(none)'}`, 6000);
         cycle--; continue; // same attempt, fresh session
       }
-      t.plan = readAi('PLAN.md'); t.summary = readAi('SUMMARY.md');
+      t.plan = keepAi('PLAN.md'); t.summary = keepAi('SUMMARY.md');
       remember(p, t);
       if (!t.summary) return block(p, t, `Dev finished without writing ${p.planDir}/SUMMARY.md`);
+      if (git(wt, 'rev-list', '--count', `${t.baseSha}..HEAD`) !== '0') return block(p, t, `The developer agent made commits itself; review the branch ${p.branch} in ${wt} before retrying.`);
       if (!git(wt, 'status', '--porcelain')) { // nothing changed: feedback-only ticket, no QA/commit/push
         removeBeWorktree(p, t);
         t.files = [];
@@ -825,15 +840,15 @@ async function runBeTicket(p, t, job) {
     t.skipDev = false;
     const hold = holdFor('be-qa');
     if (hold) return park('QA', hold);
-    const qaCfg = configChanges(p, wt);
-    if (qaCfg) return block(p, t, `Agent configuration files were changed in this ticket's workspace, so QA will not run there until you review them:\n${qaCfg}\nWorkspace: ${wt}`);
+    const qaUnsafe = beUnsafe(p, t, wt, 'QA will not run there');
+    if (qaUnsafe) return block(p, t, qaUnsafe);
     t.status = 'QA'; save();
     const reportFile = path.join(DATA, 'logs', p.id, `${t.id}-qa-${cycle}-${Date.now()}.report.md`);
     const failing = t.baseline.failing;
     const qaPrompt = `${agentBody('be-qa')}\n\n---\nJira ticket under test: ${t.id} (${p.repo}):\n\n${p.idea}\n\n` +
       `Baseline failures on clean main (ignore these): ${failing.length ? `\n${failing.map((f) => `- ${f}`).join('\n')}` : 'none'}\n\n` +
       `The implementation is the uncommitted change set: inspect it with git status and git diff. The developer's notes are in ${p.planDir}/SUMMARY.md. ` +
-      'Run the real lint, typecheck and test commands, including the existing suite. ' +
+      'Run the real lint, typecheck and test commands, including the existing suite. ' + NM_RULE + ' ' +
       'Do not edit application code or tests. End your reply with exactly one line: VERDICT: PASS, VERDICT: FAIL or VERDICT: BLOCKED.';
     const qa = await codex(`${t.id}-qa-${cycle}`, qaPrompt, reportFile);
     if (job.paused) return park('QA', 'Paused for the team tea break (QA restarts)');
@@ -847,15 +862,13 @@ async function runBeTicket(p, t, job) {
     say(`${verdict === 'PASS' ? '✓' : '✗'} [${p.name}] ${t.id} QA verdict: ${verdict} (attempt ${cycle + 1}/${MAX_FIX_CYCLES + 1})`);
 
     if (verdict === 'PASS') {
-      t.plan = readAi('PLAN.md') ?? t.plan; t.summary = readAi('SUMMARY.md') ?? t.summary; // kept before the worktree goes
+      t.plan = keepAi('PLAN.md') ?? t.plan; t.summary = keepAi('SUMMARY.md') ?? t.summary; // kept before the worktree goes
       git(wt, 'add', '-A');
-      const staged = git(wt, 'diff', '--cached', '--name-only').split('\n').filter(Boolean);
-      const secrets = secretFiles(staged);
-      if (secrets.length) { git(wt, 'reset', '-q'); return block(p, t, `QA passed but secret-like files were created: ${secrets.join(', ')}. Add them to .gitignore, then choose "Retry, keeping this task's work".`); }
-      const cfg = configChanges(p, wt);
-      if (cfg) { git(wt, 'reset', '-q'); return block(p, t, `QA passed, but agent configuration files were changed, so this ticket will not be committed until you review them:\n${cfg}\nWorkspace: ${wt}`); }
-      git(wt, 'commit', '-q', '-m', `${commitType(p.idea)}(${p.ticketKey}): ${t.title}\n\nQA: PASS (Codex), fix cycles: ${cycle}`);
-      t.files = staged;
+      const unsafe = beUnsafe(p, t, wt, 'QA passed but nothing is committed');
+      if (unsafe) { git(wt, 'reset', '-q'); return block(p, t, unsafe); }
+      try { git(wt, 'commit', '-q', '-m', `${commitType(p.idea)}(${p.ticketKey}): ${t.title}\n\nQA: PASS (Codex), fix cycles: ${cycle}`); }
+      catch (e) { git(wt, 'reset', '-q'); return block(p, t, `Commit failed (repo hook?): ${clip(e.stderr || e.message, 1500)}`); }
+      t.files = git(wt, 'diff', '--name-only', `${t.baseSha}..HEAD`).split('\n').filter(Boolean);
       remember(p, t);
       removeBeWorktree(p, t); // the branch has a commit now, so it is kept
       const push = await pushBranch(p);
