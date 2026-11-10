@@ -121,15 +121,23 @@ export function sumUsage(list) {
 
 // A denied tool call -> a narrow allow rule for similar calls, or null when no safe rule exists.
 // Built from the real leading words only; shell operators, flags or odd characters mean "no suggestion".
-const SUBCOMMAND_TOOLS = ['git', 'npm', 'npx', 'pnpm', 'yarn', 'docker'];
+// Tools with subcommands: only these read-only or install/test subcommands are ever suggested.
+const SAFE_SUBCOMMANDS = {
+  git: ['status', 'diff', 'log', 'show', 'branch', 'rev-parse'],
+  docker: ['ps', 'images', 'logs'],
+  npm: ['test', 'ci', 'install'], pnpm: ['test', 'install'], yarn: ['test', 'install'],
+};
+// Commands that can run arbitrary code, change privileges or persist: never suggested as a blanket rule.
+const NEVER = /^(sh|bash|zsh|fish|dash|ksh|csh|tcsh|python[\d.]*|perl|ruby|php|lua|node|deno|bun|osascript|env|xargs|sudo|su|doas|eval|exec|command|builtin|source|find|awk|gawk|sed|nohup|timeout|nice|time|watch|parallel|ssh|scp|rsync|nc|ncat|socat|dd|rm|chmod|chown|crontab|launchctl|open|npx)$/i;
 export function permissionRule(d) {
   if (d.tool_name !== 'Bash') return /^[A-Za-z][\w-]*$/.test(d.tool_name ?? '') ? d.tool_name : null;
   const cmd = String(d.tool_input?.command ?? '').trim();
-  if (!cmd || /[;&|`$<>(){}\\\n]/.test(cmd)) return null;
+  if (!cmd || /[;&|`$<>(){}\\'"\n]/.test(cmd)) return null;
   const [first, second] = cmd.split(/\s+/);
-  if (!/^[a-z][\w.-]*$/i.test(first)) return null;
-  if (!SUBCOMMAND_TOOLS.includes(first)) return `Bash(${first}:*)`;
-  return second && /^[a-z][\w:.-]*$/i.test(second) ? `Bash(${first} ${second}:*)` : null;
+  if (!/^[a-z][\w.-]*$/i.test(first) || NEVER.test(first)) return null;
+  const subs = SAFE_SUBCOMMANDS[first.toLowerCase()];
+  if (!subs) return `Bash(${first}:*)`;
+  return subs.includes(second) ? `Bash(${first} ${second}:*)` : null;
 }
 
 // ---------- usage limits ----------

@@ -61,7 +61,13 @@ test('sumUsage ignores missing entries', () => {
 
 test('permissionRule builds narrow allow rules and refuses unsafe ones', () => {
   const rule = (command) => permissionRule({ tool_name: 'Bash', tool_input: { command } });
-  assert.equal(rule('docker compose up -d'), 'Bash(docker compose:*)');
+  assert.equal(rule('docker compose up -d'), null); // compose can mount the host: not suggested
+  assert.equal(rule('docker ps -a'), 'Bash(docker ps:*)');
+  assert.equal(rule('git push origin main'), null);
+  assert.equal(rule('git config core.sshCommand x'), null);
+  assert.equal(rule('git show HEAD'), 'Bash(git show:*)');
+  for (const c of ['python -c print', 'bash -c id', 'env FOO=1 make', 'xargs rm', 'sudo ls', 'find . -delete', 'sed -i s/a/b/ f', 'npx some-pkg']) assert.equal(rule(c), null, c);
+  assert.equal(rule("echo 'hi'"), null);
   assert.equal(rule('curl -s http://x'), 'Bash(curl:*)');
   assert.equal(rule('$(evil)'), null);
   assert.equal(rule('git -c core.sshCommand=evil push'), null); // never "Bash(git -c:*)"

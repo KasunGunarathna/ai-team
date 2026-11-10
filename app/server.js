@@ -448,12 +448,14 @@ async function runTask(p, t, job) {
     const hold = holdFor('qa');
     if (hold) return park('QA', hold);
 
+    const qaCfg = configChanges(p, wt);
+    if (qaCfg) return block(p, t, `Agent configuration files were changed in this task's workspace, so QA will not run there until you review them:\n${qaCfg}\nWorkspace: ${wt}`);
     t.status = 'QA'; save();
     const reportFile = path.join(DATA, 'logs', p.id, `${t.id}-qa-${cycle}-${Date.now()}.report.md`);
     const qaPrompt = `${agentBody('qa-engineer')}\n\n---\nTask under test: ${p.taskDir}/${t.id}.md (${t.title}).${p.kind === 'ticket' ? ` Existing codebase: also run the existing test suite to catch regressions.` : ''}\n` +
       'The implementation is the uncommitted change set: inspect it with git status and git diff. Run the real lint, typecheck and test commands. ' +
       'Do not edit application code or tests. End your reply with exactly one line: VERDICT: PASS, VERDICT: FAIL or VERDICT: BLOCKED.';
-    const qa = await agentRun(p, t, `${t.id}-qa-${cycle}`, 'codex', ['exec', '--json', '-C', wt, '-s', 'workspace-write', '-o', reportFile, qaPrompt], job, wt);
+    const qa = await agentRun(p, t, `${t.id}-qa-${cycle}`, 'codex', ['exec', '--json', '--ignore-rules', '-C', wt, '-s', 'workspace-write', '-o', reportFile, qaPrompt], job, wt);
     if (job.paused) return park('QA', 'Paused for the team tea break (QA restarts)');
     if (!qa || job.stopped) return block(p, t, 'Stopped by you during QA.');
     if (qa.limited) return limitedAt('QA', qa.limited);
