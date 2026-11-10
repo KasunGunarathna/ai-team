@@ -1,0 +1,9 @@
+{
+  "name": "ai-team",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node app/server.js",
+    "test": "node --test app/*.test.js"
+  }
+}

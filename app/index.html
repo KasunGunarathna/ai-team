@@ -1,0 +1,315 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AI Team</title>
+<link rel="icon" href="data:,">
+<style>
+  :root { --bg:#f6f7f9; --card:#fff; --fg:#1d2330; --muted:#667085; --line:#e3e6eb; --accent:#3b5bdb;
+          --ok:#2b8a3e; --bad:#c92a2a; --warn:#e67700; --warnbg:#fff4e6; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#14161b; --card:#1d2027; --fg:#e6e8ec; --muted:#9aa2b1; --line:#2c303a; --accent:#748ffc; --warnbg:#2b2112; } }
+  * { box-sizing: border-box; }
+  body { margin:0; font:14px/1.45 system-ui, sans-serif; background:var(--bg); color:var(--fg); display:grid; grid-template-columns:280px 1fr; min-height:100vh; }
+  aside { border-right:1px solid var(--line); padding:16px; background:var(--card); }
+  main { padding:16px; overflow:auto; min-width:0; }
+  h1 { font-size:18px; margin:0 0 12px; } h2 { font-size:16px; margin:0; } h3 { font-size:12px; text-transform:uppercase; color:var(--muted); margin:16px 0 8px; }
+  input, textarea, button { font:inherit; color:inherit; }
+  input, textarea { width:100%; padding:6px 8px; border:1px solid var(--line); border-radius:6px; background:var(--bg); margin-bottom:8px; }
+  textarea { min-height:120px; resize:vertical; }
+  input[type=radio] { width:auto; margin:3px 8px 0 0; }
+  button { padding:6px 12px; border-radius:6px; border:1px solid var(--accent); background:var(--accent); color:#fff; cursor:pointer; }
+  button.ghost { background:none; color:var(--accent); } button:disabled { opacity:.45; cursor:default; }
+  a { color:var(--accent); cursor:pointer; }
+  .tabs { display:flex; gap:4px; margin-bottom:12px; border-bottom:1px solid var(--line); }
+  .tabs button { background:none; border:none; border-bottom:2px solid transparent; border-radius:0; color:var(--muted); padding:6px 10px; }
+  .tabs button.on { color:var(--fg); border-bottom-color:var(--accent); font-weight:600; }
+  .tabs .count { color:var(--warn); font-weight:600; }
+  .proj { padding:8px; border-radius:6px; cursor:pointer; margin-bottom:4px; } .proj.sel, .proj:hover { background:var(--bg); }
+  .muted { color:var(--muted); font-size:12px; } .err { color:var(--bad); } .flag { color:var(--warn); font-size:12px; font-weight:600; }
+  .row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+  .board { display:grid; grid-template-columns:repeat(auto-fit, minmax(160px,1fr)); gap:10px; }
+  .col { background:var(--card); border:1px solid var(--line); border-radius:8px; padding:8px; min-height:120px; }
+  .col h3 { margin-top:0; }
+  .task { border:1px solid var(--line); border-left:4px solid var(--muted); border-radius:6px; padding:6px 8px; margin-bottom:8px; background:var(--bg); }
+  .task.DONE { border-left-color:var(--ok); } .task.BLOCKED { border-left-color:var(--bad); } .task.IN_PROGRESS, .task.QA, .task.CHANGES_REQUESTED { border-left-color:var(--warn); }
+  .pill { font-size:11px; padding:1px 6px; border-radius:10px; background:var(--line); }
+  .busy { background:var(--warn); color:#fff; padding:6px 10px; border-radius:6px; margin-bottom:12px; }
+  .decision { border:1px solid var(--warn); background:var(--warnbg); border-radius:8px; padding:12px; margin-bottom:10px; }
+  .decision label { display:flex; align-items:flex-start; margin:4px 0; cursor:pointer; }
+  .decision textarea { min-height:60px; margin-top:6px; }
+  .detail { white-space:pre-wrap; font-size:12px; max-height:180px; overflow:auto; background:var(--card); border:1px solid var(--line); border-radius:6px; padding:8px; margin:6px 0; }
+  .runs { font-size:12px; margin-top:4px; } .runs div { margin:2px 0; }
+  .tokens { font-size:12px; color:var(--muted); font-variant-numeric:tabular-nums; }
+  pre { white-space:pre-wrap; word-break:break-word; background:var(--card); border:1px solid var(--line); border-radius:8px; padding:12px; max-height:60vh; overflow:auto; font-size:12px; }
+  @media (max-width:800px) { body { grid-template-columns:1fr; } }
+</style>
+</head>
+<body>
+<aside>
+  <h1>AI Team <a href="/" style="font-size:13px;font-weight:500;margin-left:6px">🏢 Office</a></h1>
+  <div class="tabs" role="tablist">
+    <button type="button" role="tab" data-tab="idea">Projects <span class="count"></span></button>
+    <button type="button" role="tab" data-tab="ticket">Jira tickets <span class="count"></span></button>
+  </div>
+  <div id="projects"></div>
+
+  <form id="newProject" data-kind="idea">
+    <h3>New project</h3>
+    <input name="name" placeholder="Project name" required>
+    <div class="row" style="flex-wrap:nowrap;margin-bottom:8px">
+      <input name="path" placeholder="Folder path, e.g. ~/Development/MyApp" required style="margin:0">
+      <button type="button" class="ghost browse">Browse…</button>
+    </div>
+    <textarea name="idea" placeholder="Describe your project idea for the PM/BA agent" required></textarea>
+    <p class="muted" style="margin:0 0 8px"><a href="/template" download>Download idea template (.md)</a>: fill it in, then paste it above.</p>
+    <button>Add project</button>
+    <div class="err formErr"></div>
+  </form>
+
+  <form id="newTicket" data-kind="ticket" hidden>
+    <h3>New Jira ticket</h3>
+    <div class="row" style="flex-wrap:nowrap;margin-bottom:8px">
+      <input name="path" placeholder="Existing repo folder" required style="margin:0">
+      <button type="button" class="ghost browse">Browse…</button>
+    </div>
+    <input name="ticketKey" placeholder="Jira key, e.g. MINT-123" required>
+    <textarea name="idea" placeholder="Paste the Jira ticket: summary, description, acceptance criteria" required></textarea>
+    <p class="muted" style="margin:0 0 8px"><a href="/template?type=ticket" download>Download ticket template (.md)</a>. Work goes on branch <code>ai-team/&lt;KEY&gt;</code>, created from the branch the repo is on.</p>
+    <button>Add ticket</button>
+    <div class="err formErr"></div>
+  </form>
+  <button class="ghost" id="teaBtn" style="width:100%;margin-top:12px">☕ Team tea break</button>
+  <button class="ghost" id="soundBtn" style="width:100%;margin-top:8px" title="Sounds for task start, task done, blocked, approvals and a reminder every 2 minutes"></button>
+  <p class="muted" id="usage"></p>
+  <p class="muted" id="daily"></p>
+</aside>
+<main id="main"><p class="muted">Add or select a project.</p></main>
+
+<script src="/sounds.js"></script>
+<script>
+const COLS = [['BACKLOG','Backlog'],['READY','Ready'],['IN_PROGRESS','Dev'],['QA','QA'],['DONE','Done'],['BLOCKED','Blocked']];
+const NOTE_HINT = { plan: 'Notes for PM/BA (used when you choose Re-plan)', question: 'Optional note (required for "Other")', permission: 'Optional note', blocked: 'Optional instructions for the developer agent on the retry' };
+let S = { projects: [] }, openLog = null, actError = '';
+let sel = null, tab = 'idea'; try { sel = localStorage.getItem('sel'); tab = localStorage.getItem('tab') || 'idea'; } catch {}
+const kindOf = (p) => p.kind || 'idea';
+const runN = Object.assign(document.createElement('input'), { type: 'number', min: 1, max: 20, value: 1, style: 'width:64px;margin:0' });
+// Forms built once and reused, so the 3-second refresh does not wipe what you type.
+const kept = new Map();
+const keep = (key, build) => { if (!kept.has(key)) kept.set(key, build()); return kept.get(key); };
+const openRuns = new Set(); // task cards whose run list is expanded
+const decisionNodes = new Map(); // keep half-filled forms alive across refreshes
+
+const el = (tag, props = {}, ...kids) => { const e = Object.assign(document.createElement(tag), props); e.append(...kids.filter(k => k != null && k !== false)); return e; };
+const api = async (url, body) => {
+  const r = await fetch(url, body === undefined ? {} : { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(data.error || r.statusText);
+  return data;
+};
+const act = (url, body = {}) => api(url, body).then(() => { actError = ''; return refresh(); }).catch(e => { actError = e.message; render(); });
+
+const fmt = (n) => n >= 1e6 ? (n / 1e6).toFixed(1) + 'M' : n >= 1e3 ? (n / 1e3).toFixed(1) + 'k' : String(n ?? 0);
+const usageText = (u) => !u ? '' : `in ${fmt(u.input)} · cache ${fmt(u.cacheRead + u.cacheWrite)} · out ${fmt(u.output)}` + (u.costUsd ? ` · ≈$${u.costUsd.toFixed(2)}` : '');
+const dur = (ms) => ms == null ? '' : ms < 60000 ? Math.round(ms / 1000) + 's' : Math.round(ms / 60000) + 'm';
+const ICON = { running: '⏳', ok: '✓', error: '✗', interrupted: '⚠', stopped: '■', limited: '⏸' };
+const hhmm = (ms) => new Date(ms).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+async function refresh() {
+  S = await api('/api/state');
+  AiSounds.watch(S);
+  document.getElementById('teaBtn').textContent = S.teaBreak ? '▶ Back to work' : '☕ Team tea break';
+  const cu = S.claudeUsage;
+  document.getElementById('usage').textContent = cu ? `Claude usage: 5-hour ${Math.round((cu.fiveHour?.utilization ?? 0) * 100)}%${cu.fiveHour?.resetsAt ? ` (resets ${hhmm(cu.fiveHour.resetsAt * 1000)})` : ''} · 7-day ${Math.round((cu.sevenDay?.utilization ?? 0) * 100)}%` : '';
+  document.getElementById('daily').textContent = S.dailyAt ? `Daily run at ${S.dailyAt}: ${S.dailyTasks} task(s) per approved project, while this app is running.` : 'Daily run off.';
+  const list = document.getElementById('projects'); list.replaceChildren();
+  for (const b of document.querySelectorAll('.tabs button')) {
+    const waiting = S.projects.filter(p => kindOf(p) === b.dataset.tab).reduce((n, p) => n + p.decisions.filter(d => !d.answer).length, 0);
+    b.classList.toggle('on', b.dataset.tab === tab);
+    b.setAttribute('aria-selected', b.dataset.tab === tab);
+    b.querySelector('.count').textContent = waiting ? `⚑${waiting}` : '';
+  }
+  document.getElementById('newProject').hidden = tab !== 'idea';
+  document.getElementById('newTicket').hidden = tab !== 'ticket';
+  const items = S.projects.filter(p => kindOf(p) === tab);
+  if (!items.length) list.append(el('p', { className: 'muted', textContent: tab === 'ticket' ? 'No tickets yet.' : 'No projects yet.' }));
+  for (const p of items) {
+    const waiting = p.decisions.filter(d => !d.answer).length;
+    list.append(el('div', { className: 'proj' + (p.id === sel ? ' sel' : ''), onclick: () => { sel = p.id; try { localStorage.setItem('sel', sel); } catch {} openLog = null; actError = ''; refresh(); } },
+      el('div', { textContent: p.name }),
+      el('div', { className: 'muted', textContent: `${p.resumePlan ? 'PLANNING QUEUED' : p.status} · ${p.tasks.filter(t => t.status === 'DONE').length}/${p.tasks.length} done${p.auto ? ' · ⟳ auto' : p.runBudget ? ` · ${p.runBudget} queued` : ''}` }),
+      waiting ? el('div', { className: 'flag', textContent: `⚑ ${waiting} waiting for you` }) : null));
+  }
+  render();
+  if (openLog) loadLog();
+}
+
+function runList(p, runs) {
+  return el('div', { className: 'runs' }, ...runs.map(r => el('div', {},
+    el('a', { textContent: `${ICON[r.status] || ''} ${r.label}`, onclick: () => { openLog = { project: p.id, run: r, node: logPanel(r) }; render(); loadLog(); openLog.node.scrollIntoView({ behavior: 'smooth' }); } }),
+    el('span', { className: 'tokens', textContent: ` ${r.engine ? '· ' + r.engine : ''} ${r.durationMs != null ? '· ' + dur(r.durationMs) : ''} ${r.usage ? '· ' + usageText(r.usage) : ''}` }))));
+}
+
+// Built once per opened log so refreshes do not reset its scroll position.
+const logPanel = (r) => el('div', {},
+  el('div', { className: 'row' }, el('h3', { textContent: `Log: ${r.label}` }), el('button', { className: 'ghost', textContent: 'Close', onclick: () => { openLog = null; render(); } })),
+  el('p', { className: 'tokens', id: 'logMeta' }),
+  el('pre', { id: 'log', textContent: 'Loading…' }));
+
+function editForm(p) {
+  return keep('edit' + p.id, () => {
+    const name = el('input', { value: p.name }), idea = el('textarea', { value: p.idea, style: 'min-height:200px' });
+    return el('details', { style: 'flex:1;min-width:220px' }, el('summary', { textContent: kindOf(p) === 'ticket' ? 'Edit ticket' : 'Edit project' }),
+      el('div', { style: 'margin-top:6px' }, name, idea,
+        el('button', { textContent: 'Save', onclick: () => act(`/api/projects/${p.id}/edit`, { name: name.value, idea: idea.value }) }),
+        el('p', { className: 'muted', textContent: 'Saving does not re-plan. Use Re-plan to plan again with the new idea.' })));
+  });
+}
+
+function replanForm(p) {
+  return keep('replan' + p.id, () => {
+    const note = el('textarea', { placeholder: 'What should PM/BA change? (optional)', style: 'min-height:70px' });
+    return el('details', { style: 'flex:1;min-width:220px' }, el('summary', { textContent: 'Re-plan with PM/BA' }),
+      el('div', { style: 'margin-top:6px' }, note,
+        el('button', { textContent: 'Re-plan', onclick: () => act(`/api/projects/${p.id}/plan`, { note: note.value }).then(() => { note.value = ''; }) }),
+        el('p', { className: 'muted', textContent: 'DONE tasks stay DONE. Everything else is planned again, and you approve the new plan.' })));
+  });
+}
+
+function retryForm(p, t) {
+  return keep(`retry${p.id}${t.id}${t.status}`, () => {
+    const note = el('textarea', { placeholder: t.status === 'DONE' ? 'What should change?' : 'Instructions for the developer (optional)', style: 'min-height:50px;font-size:12px' });
+    const go = (mode) => act(`/api/projects/${p.id}/retry/${t.id}`, { mode, note: note.value });
+    return el('details', {}, el('summary', { className: 'muted', textContent: t.status === 'DONE' ? 'Redo' : 'Retry' }),
+      note,
+      t.status === 'DONE'
+        ? el('button', { className: 'ghost', textContent: 'Redo task', onclick: () => go('continue') })
+        : el('div', { className: 'row' },
+            el('button', { className: 'ghost', textContent: 'Retry (keep changes)', onclick: () => go('continue') }),
+            el('button', { className: 'ghost', textContent: 'Discard & start again', onclick: () => { if (confirm("Discard this task's work and start it again from the latest work branch?")) go('restart'); } })));
+  });
+}
+
+function decisionNode(p, d) {
+  const key = p.id + d.id;
+  if (decisionNodes.has(key)) return decisionNodes.get(key);
+  const name = 'd' + d.id;
+  const note = el('textarea', { placeholder: NOTE_HINT[d.kind] || 'Optional note' });
+  const err = el('div', { className: 'err' });
+  const node = el('form', { className: 'decision', onsubmit: async (e) => {
+      e.preventDefault();
+      const choice = node.querySelector(`input[name="${name}"]:checked`);
+      if (!choice) { err.textContent = 'Choose an option.'; return; }
+      try { await api(`/api/projects/${p.id}/decisions/${d.id}`, { answer: choice.value, note: note.value }); decisionNodes.delete(key); refresh(); }
+      catch (x) { err.textContent = x.message; }
+    } },
+    el('div', { className: 'row' }, el('span', { className: 'pill', textContent: d.kind }), el('b', { textContent: d.question })),
+    d.detail ? el('div', { className: 'detail', textContent: d.detail }) : null,
+    ...d.options.map((o, i) => el('label', {}, el('input', { type: 'radio', name, value: o.value, checked: i === 0 && d.kind !== 'blocked' }), el('span', { textContent: o.label }))),
+    note, el('div', { className: 'row' }, el('button', { textContent: 'Submit decision' }), err));
+  decisionNodes.set(key, node);
+  return node;
+}
+
+function render() {
+  const main = document.getElementById('main'), p = S.projects.find(x => x.id === sel);
+  if (!p) { main.replaceChildren(el('p', { className: 'muted', textContent: 'Add or select a project.' })); return; }
+  const busy = !!S.busy;
+  const open = p.decisions.filter(d => !d.answer), answered = p.decisions.filter(d => d.answer);
+  main.replaceChildren(...[
+    S.teaBreak ? el('div', { className: 'busy row', style: 'background:var(--accent)' },
+      el('span', { textContent: '☕ Team tea break: all agents are paused. Their tasks continue when you press Back to work.', style: 'flex:1' }),
+      el('button', { className: 'ghost', style: 'background:#fff', textContent: 'Back to work', onclick: () => act('/api/teabreak', { on: false }) })) : null,
+    S.pausedUntil ? el('div', { className: 'busy row', style: 'background:var(--accent)' },
+      el('span', { textContent: `⏸ Usage limit reached. Paused until ${new Date(S.pausedUntil).toLocaleString()}, then work continues automatically.`, style: 'flex:1' }),
+      el('button', { className: 'ghost', style: 'background:#fff', textContent: 'Resume now', onclick: () => act('/api/resume') })) : null,
+    S.busy ? el('div', { className: 'busy row' }, el('span', { textContent: `Working (${S.jobs.length}/${S.maxAgents}): ${S.busy}${S.focus ? ` · 🎯 focus: ${S.projects.find((x) => x.id === S.focus)?.name ?? ''}` : ''}`, style: 'flex:1' }),
+      el('button', { className: 'ghost', style: 'background:#fff', textContent: 'Stop', onclick: () => { if (confirm('Stop the running agent? Its task will be marked BLOCKED so you can retry it.')) act('/api/stop'); } })) : null,
+    el('div', { className: 'row' }, el('h2', { textContent: p.name }), kindOf(p) === 'ticket' ? el('span', { className: 'pill', textContent: 'Jira ticket' }) : null, el('span', { className: 'pill', textContent: p.status })),
+    el('p', { className: 'muted', style: 'margin:4px 0', textContent: `${p.path} · branch ${p.branch}` }),
+    el('p', { className: 'tokens', style: 'margin:0', textContent: `Tokens used: ${usageText(p.usage)}${p.usage.costUsd ? ' (Claude API-equivalent estimate; your subscription is not billed per token)' : ''}` }),
+    p.allowTools.length ? el('p', { className: 'muted', style: 'margin:4px 0', textContent: 'Extra allowed tools: ' + p.allowTools.join(', ') }) : null,
+    el('details', {}, el('summary', { textContent: kindOf(p) === 'ticket' ? 'Ticket details' : 'Idea' }), el('p', { textContent: p.idea, style: 'white-space:pre-wrap' })),
+    el('div', { className: 'row', style: 'align-items:flex-start;margin-top:8px' }, editForm(p), replanForm(p),
+      el('button', { className: 'ghost', textContent: kindOf(p) === 'ticket' ? 'Remove ticket' : 'Remove project', onclick: () => { if (confirm(`Remove "${p.name}" from AI Team? Its logs are deleted. Files and git history in ${p.path} are not touched.`)) act(`/api/projects/${p.id}/remove`); } })),
+    el('div', { className: 'row', style: 'margin-top:12px' },
+      p.resumePlan ? el('span', { className: 'pill', textContent: 'Planning queued: starts when the current agent finishes' }) : null,
+      p.status === 'NEW' && !p.runs.length && !p.resumePlan ? el('button', { textContent: kindOf(p) === 'ticket' ? 'Analyse ticket with PM/BA' : 'Plan with PM/BA', disabled: busy, onclick: () => act(`/api/projects/${p.id}/plan`) }) : null,
+      p.status === 'APPROVED' ? el('label', { className: 'row', style: 'gap:4px;cursor:pointer' },
+        el('input', { type: 'checkbox', checked: !!p.auto, style: 'width:auto;margin:0', onchange: (e) => act(`/api/projects/${p.id}/auto`, { on: e.target.checked }) }),
+        el('b', { textContent: 'Auto-run' }), el('span', { className: 'muted', textContent: '(next task starts automatically until all DONE)' })) : null,
+      p.status === 'APPROVED' && !p.auto ? el('button', { textContent: 'Run next', onclick: () => act(`/api/projects/${p.id}/run`, { max: Number(runN.value) }) }) : null,
+      p.status === 'APPROVED' && !p.auto ? runN : null,
+      p.status === 'APPROVED' && !p.auto ? el('span', { className: 'muted', textContent: p.runBudget ? `${p.runBudget} task(s) queued` : 'task(s): Dev (Claude Code) → QA (Codex). Queues if another agent is busy.' }) : null),
+    el('div', { className: 'err', textContent: actError || p.error || '' }),
+    open.length ? el('h3', { textContent: `Waiting for you (${open.length})` }) : null,
+    ...open.map(d => decisionNode(p, d)),
+    p.runs.length ? el('h3', { textContent: 'PM/BA runs' }) : null,
+    p.runs.length ? runList(p, p.runs) : null,
+    p.tasks.length ? el('h3', { textContent: 'Board' }) : null,
+    p.tasks.length ? el('div', { className: 'board' }, ...COLS.map(([key, label]) => {
+      const tasks = p.tasks.filter(t => t.status === key || (key === 'IN_PROGRESS' && t.status === 'CHANGES_REQUESTED'));
+      return el('div', { className: 'col' }, el('h3', { textContent: `${label} (${tasks.length})` }), ...tasks.map(t =>
+        el('div', { className: 'task ' + t.status },
+          el('div', {}, el('b', { textContent: t.id }), ' ', el('span', { className: 'pill', textContent: `P${t.phase} · ${t.owner}` })),
+          el('div', { textContent: t.title }),
+          t.cycles ? el('div', { className: 'muted', textContent: `fix cycle ${t.cycles}/2` }) : null,
+          t.dependsOn.length ? el('div', { className: 'muted', textContent: 'needs ' + t.dependsOn.join(', ') }) : null,
+          t.note ? el('div', { className: 'err', style: 'font-size:12px', textContent: t.note.split('\n')[0] }) : null,
+          t.runs.length ? el('div', { className: 'tokens', textContent: 'Σ ' + usageText(t.usage) }) : null,
+          ['BLOCKED', 'DONE'].includes(t.status) ? retryForm(p, t) : null,
+          t.runs.length ? el('details', { open: openRuns.has(p.id + t.id), ontoggle: (e) => e.target.open ? openRuns.add(p.id + t.id) : openRuns.delete(p.id + t.id) },
+            el('summary', { className: 'muted', textContent: `Runs (${t.runs.length})` }), runList(p, t.runs)) : null)));
+    })) : null,
+    openLog ? openLog.node : null,
+    answered.length ? el('details', { style: 'margin-top:16px' }, el('summary', { textContent: `Decision history (${answered.length})` }),
+      ...answered.map(d => el('p', { className: 'muted', textContent: `${d.answeredAt?.slice(0, 16).replace('T', ' ')} · ${d.question} → ${d.options.find(o => o.value === d.answer)?.label ?? d.answer}${d.note ? ` · note: ${d.note}` : ''}` }))) : null,
+  ].filter(Boolean));
+  for (const key of decisionNodes.keys()) if (!open.some(d => p.id + d.id === key) && key.startsWith(p.id)) decisionNodes.delete(key);
+}
+
+async function loadLog() {
+  const pre = document.getElementById('log'); if (!pre) return;
+  const r = await fetch(`/api/log?project=${encodeURIComponent(openLog.project)}&file=${encodeURIComponent(openLog.run.log)}`);
+  const text = await r.text();
+  // Latest run record (status/tokens may have changed since the link was clicked).
+  const p = S.projects.find(x => x.id === openLog.project);
+  const run = [...(p?.runs ?? []), ...(p?.tasks.flatMap(t => t.runs) ?? [])].find(x => x.log === openLog.run.log) ?? openLog.run;
+  document.getElementById('logMeta').textContent = `${ICON[run.status] || ''} ${run.status} · ${run.engine ?? ''} · started ${run.startedAt?.slice(11, 19) ?? ''} ${run.durationMs != null ? '· ' + dur(run.durationMs) : ''} ${run.usage ? '· ' + usageText(run.usage) : ''}`;
+  const atBottom = pre.scrollTop + pre.clientHeight >= pre.scrollHeight - 20;
+  if (pre.textContent !== text) { pre.textContent = text; if (atBottom || !pre.dataset.loaded) pre.scrollTop = pre.scrollHeight; }
+  pre.dataset.loaded = '1';
+}
+
+for (const b of document.querySelectorAll('.tabs button')) b.onclick = () => {
+  tab = b.dataset.tab; try { localStorage.setItem('tab', tab); } catch {}
+  const first = S.projects.find(p => kindOf(p) === tab && p.id === sel) || S.projects.find(p => kindOf(p) === tab);
+  sel = first?.id ?? null; openLog = null; actError = ''; refresh();
+};
+for (const form of document.querySelectorAll('#newProject, #newTicket')) {
+  const err = form.querySelector('.formErr');
+  form.querySelector('.browse').onclick = async (e) => {
+    e.target.disabled = true;
+    try {
+      const { path } = await api('/api/pick-folder', {});
+      if (path) { form.path.value = path; if (form.name && !form.name.value) form.name.value = path.split('/').pop(); }
+    } catch (x) { err.textContent = x.message; }
+    finally { e.target.disabled = false; }
+  };
+  form.onsubmit = async (e) => {
+    e.preventDefault();
+    const body = { ...Object.fromEntries(new FormData(form)), kind: form.dataset.kind };
+    if (body.kind === 'ticket') body.name = `${body.ticketKey.trim().toUpperCase()} · ${body.path.replace(/\/+$/, '').split('/').pop()}`;
+    try { const { id } = await api('/api/projects', body); sel = id; try { localStorage.setItem('sel', id); } catch {} form.reset(); err.textContent = ''; refresh(); }
+    catch (x) { err.textContent = x.message; }
+  };
+}
+document.getElementById('teaBtn').onclick = () => act('/api/teabreak', { on: !S.teaBreak });
+const soundBtn = document.getElementById('soundBtn');
+const soundLabel = () => { soundBtn.textContent = AiSounds.isOn() ? '🔔 Sounds on' : '🔕 Sounds off'; };
+soundBtn.onclick = () => { AiSounds.setOn(!AiSounds.isOn()); soundLabel(); };
+soundLabel();
+refresh(); setInterval(refresh, 3000);
+</script>
+</body>
+</html>

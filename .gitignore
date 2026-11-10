@@ -1,0 +1,5 @@
+# App state, agent logs and task worktrees: local and may contain private project details
+data/
+node_modules/
+.playwright-mcp/
+.DS_Store
