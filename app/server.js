@@ -135,6 +135,10 @@ function excludeIn(repoDir, entry) {
 // ---------- BE ticket memory: data/be-tickets.json, one record per ticket keyed by "<repo>/<KEY>" ----------
 // A missing file is empty memory; a corrupt one throws rather than being overwritten.
 const readMemory = () => (fs.existsSync(BE_MEMORY) ? JSON.parse(fs.readFileSync(BE_MEMORY, 'utf8')) : {});
+function writeMemory(mem) {
+  fs.writeFileSync(BE_MEMORY + '.tmp', JSON.stringify(mem, null, 2));
+  fs.renameSync(BE_MEMORY + '.tmp', BE_MEMORY);
+}
 function remember(p, t) {
   const mem = readMemory(), k = `${p.repo}/${p.ticketKey}`, old = mem[k]?.id === p.id ? mem[k] : null;
   mem[k] = {
@@ -143,8 +147,13 @@ function remember(p, t) {
     attempts: t.attempts ?? [], runs: t.runs, plan: t.plan ?? null, summary: t.summary ?? null, files: t.files ?? [], comment: t.comment ?? null,
     createdAt: old?.createdAt ?? now(), updatedAt: now(),
   };
-  fs.writeFileSync(BE_MEMORY + '.tmp', JSON.stringify(mem, null, 2));
-  fs.renameSync(BE_MEMORY + '.tmp', BE_MEMORY);
+  writeMemory(mem);
+}
+function forget(p) {
+  const mem = readMemory(), k = `${p.repo}/${p.ticketKey}`;
+  if (mem[k]?.id !== p.id) return;
+  delete mem[k];
+  writeMemory(mem);
 }
 // Up to the last 10 DONE tickets of a repo, one line each, for the dev prompt.
 function pastTickets(repo) {
@@ -347,6 +356,13 @@ function applyAnswer(p, d, value, note) {
     return startPlan(p);
   }
   if (d.kind === 'blocked') { retryTask(p, p.tasks.find((x) => x.id === d.taskId), value, note); kick(); }
+  if (d.kind === 'push') {
+    const t = p.tasks.find((x) => x.id === d.taskId);
+    if (value === 'manual') { t.note = `${t.note ? `${t.note}. ` : ''}You chose to push yourself`; return; }
+    say(`↑ [${p.name}] retrying push of ${p.branch}`);
+    pushBranch(p).then((push) => settlePush(p, t, push))
+      .catch((e) => say(`⚠ [${p.name}] push retry failed: ${clip(e.message, 300)}`));
+  }
   if (d.kind === 'design') {
     const t = p.tasks.find((x) => x.id === d.taskId);
     if (value === 'approve') t.design.status = 'approved'; else t.designFeedback = note;
@@ -359,7 +375,8 @@ function applyAnswer(p, d, value, note) {
 // mode: 'continue' keeps the task's worktree, 'restart' throws it away (user chose it explicitly; only this task's work).
 function retryTask(p, t, mode, note) {
   say(`↻ [${p.name}] ${t.id} set to retry (${mode === 'restart' ? "discarding this task's work" : 'keeping its work'})`);
-  if (mode === 'restart') removeWorktree(p, t);
+  if (mode === 'restart' && p.kind === 'be-ticket') { removeBeWorktree(p, t); t.baseline = null; } // never deletes a branch with commits
+  else if (mode === 'restart') removeWorktree(p, t);
   p.decisions = p.decisions.filter((d) => !(d.kind === 'blocked' && d.taskId === t.id && !d.answer));
   Object.assign(t, { status: 'READY', cycles: 0, note: null, skipDev: false, feedback: null, instructions: note || null });
   if (!p.auto) p.runBudget = Math.max(p.runBudget, 1);
@@ -709,6 +726,12 @@ function beWorktree(p, t) {
   return dir;
 }
 
+// Branch-name override: a valid git branch name, used as typed (check-ref-format expands @{-1}), never main/master.
+function validBranch(p, b) {
+  if (!b || /^(main|master)$/i.test(b)) return false;
+  try { return git(p.path, 'check-ref-format', '--branch', b) === b; } catch { return false; }
+}
+
 // Remove the workspace; delete the branch only if this app created it and it has no commits beyond origin/main.
 function removeBeWorktree(p, t) {
   const dir = taskWorktree(p, t);
@@ -740,6 +763,22 @@ function finishBe(p, t, outcome, extra = {}) {
   remember(p, t);
   save();
   say(`✓ [${p.name}] ${t.id} DONE (${outcome})${branchUrl ? ` · ${branchUrl}` : ''}`);
+  return true;
+}
+
+// After a push (first try or "Retry push"): finish the ticket and, if it failed, ask the product owner what next.
+function settlePush(p, t, push) {
+  t.push = push;
+  remember(p, t);
+  if (push.ok) return finishBe(p, t, 'pushed', { branchUrl: push.url ?? `${p.branch} (pushed)` });
+  finishBe(p, t, 'push_failed');
+  addDecision(p, {
+    kind: 'push', taskId: t.id,
+    question: `Push of ${p.branch} failed. The branch is committed locally in ${p.path}.`,
+    detail: push.error,
+    options: [['retry', 'Retry push'], ['manual', "I'll push myself"]],
+  });
+  save();
   return true;
 }
 
@@ -871,19 +910,7 @@ async function runBeTicket(p, t, job) {
       t.files = git(wt, 'diff', '--name-only', `${t.baseSha}..HEAD`).split('\n').filter(Boolean);
       remember(p, t);
       removeBeWorktree(p, t); // the branch has a commit now, so it is kept
-      const push = await pushBranch(p);
-      t.push = push;
-      remember(p, t);
-      if (push.ok) return finishBe(p, t, 'pushed', { branchUrl: push.url ?? `${p.branch} (pushed)` });
-      finishBe(p, t, 'push_failed');
-      addDecision(p, {
-        kind: 'push', taskId: t.id,
-        question: `Push of ${p.branch} failed. The branch is committed locally in ${p.path}.`,
-        detail: push.error,
-        options: [['retry', 'Retry push'], ['manual', "I'll push myself"]],
-      });
-      save();
-      return true;
+      return settlePush(p, t, await pushBranch(p));
     }
     if (verdict === 'BLOCKED') return block(p, t, `QA reported BLOCKED (missing tooling, environment or unclear criteria):\n\n${clip(report, 1500)}`);
     feedback = `QA (an independent reviewer) FAILED it:\n\n${report}`;
@@ -1231,10 +1258,28 @@ const server = http.createServer(async (req, res) => {
       // run/auto only queue work, so they are always allowed; the rest must not touch a project an agent is working in.
       const queues = action === 'run' || action === 'auto';
       if (!queues && action !== 'plan' && projectJobs(p).length) return send(res, 409, { error: `Busy: ${busyText()}. Stop it or wait until it finishes.` });
+      if (action === 'branch') {
+        const t = p.tasks[0], b = String(body.branch ?? '').trim();
+        if (p.kind !== 'be-ticket' || t?.status !== 'BLOCKED') return send(res, 400, { error: 'Only a BLOCKED BE ticket can get a new branch name' });
+        if (!validBranch(p, b)) return send(res, 400, { error: 'Invalid branch name' });
+        if (fs.existsSync(path.join(WT, p.id, t.id))) removeBeWorktree(p, t); // deletes the old branch only if the app made it and it is empty
+        Object.assign(t, { ownBranch: null, baseSha: null, status: 'READY', note: null }); // the next run creates a fresh branch
+        p.branch = b;
+        p.decisions = p.decisions.filter((d) => !(d.kind === 'blocked' && d.taskId === t.id && !d.answer));
+        say(`⎇ [${p.name}] branch name set to ${b}`);
+        remember(p, t); save(); kick();
+        return send(res, 200, { ok: true });
+      }
       if (action === 'remove') {
         say(`- project removed: ${p.name}`);
-        for (const t of p.tasks) if (fs.existsSync(path.join(WT, p.id, t.id))) removeWorktree(p, t);
-        try { git(p.path, 'worktree', 'remove', '--force', path.join(WT, p.id, '_integration')); } catch { /* none */ }
+        if (p.kind === 'be-ticket') {
+          const t = p.tasks[0];
+          if (fs.existsSync(path.join(WT, p.id, t.id))) removeBeWorktree(p, t);
+          if (t.status !== 'DONE') forget(p); // finished tickets stay in memory for later dev prompts
+        } else {
+          for (const t of p.tasks) if (fs.existsSync(path.join(WT, p.id, t.id))) removeWorktree(p, t);
+          try { git(p.path, 'worktree', 'remove', '--force', path.join(WT, p.id, '_integration')); } catch { /* none */ }
+        }
         fs.rmSync(path.join(WT, p.id), { recursive: true, force: true });
         fs.rmSync(path.join(REFS, p.id), { recursive: true, force: true });
         fs.rmSync(path.join(DESIGNS, p.id), { recursive: true, force: true });
