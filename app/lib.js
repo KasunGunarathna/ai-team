@@ -275,13 +275,14 @@ export function parseBaseline(text) {
   }
 }
 
-// Failing test names from a Jest --json result: "<describe> > <test>", or the suite's repo-relative path when it failed to run.
+// Failing test names from a Jest --json result: "<file> > <describe> > <test>", or the file alone when the suite failed to run.
 export function jestFailures(json, rootDir) {
   const out = [];
   for (const r of json?.testResults ?? []) {
+    const file = path.relative(rootDir, r.name ?? '');
     const failed = (r.assertionResults ?? []).filter((a) => a.status === 'failed');
-    for (const a of failed) out.push([...(a.ancestorTitles ?? []), a.title].join(' > '));
-    if (r.status === 'failed' && !failed.length) out.push(path.relative(rootDir, r.name));
+    for (const a of failed) out.push([file, ...(a.ancestorTitles ?? []), a.title].join(' > '));
+    if (r.status === 'failed' && !failed.length) out.push(file);
   }
   return [...new Set(out)].sort();
 }

@@ -796,12 +796,10 @@ const NM_RULE = 'node_modules is a link to the owner\'s install: never write, ed
 // The app (not an agent) runs the suite outside any sandbox, so tests reach the local DB; Quinn reviews offline.
 const TEST_TIMEOUT_MS = 20 * 60_000;
 function runTests(p, t, wt, label, job) {
-  const rel = path.join(p.planDir, `jest-${label}.json`), out = path.join(wt, rel);
-  fs.mkdirSync(path.dirname(out), { recursive: true });
-  fs.rmSync(out, { force: true });
   const dir = path.join(DATA, 'logs', p.id);
   fs.mkdirSync(dir, { recursive: true });
   const log = `${now().replace(/[:.]/g, '-')}-${t.id}-${label}.log`;
+  const out = path.join(dir, log.replace(/\.log$/, '.jest.json')); // outside the worktree, so an agent cannot plant a result
   const rec = { label: `${t.id}-${label}`, engine: 'app', log, status: 'running', startedAt: now() };
   t.runs.push(rec); save();
   say(`▶ [${p.name}] ${rec.label}: npm test (app)`);
@@ -816,11 +814,13 @@ function runTests(p, t, wt, label, job) {
     child.on('error', (e) => keep(`\n[spawn error] ${e.message}\n`));
     child.on('close', (code) => {
       clearTimeout(timer); job.child = null;
-      fs.writeFileSync(path.join(dir, log), `$ npm test -- --json --outputFile=${rel}\n\n${text}\n[exit ${code}]\n`);
+      fs.writeFileSync(path.join(dir, log), `$ npm test -- --json --outputFile=${out}\n\n${text}\n[exit ${code}]\n`);
       let json = null;
       try { json = JSON.parse(fs.readFileSync(out, 'utf8')); } catch { /* no or invalid result file: the suite did not run */ }
       const output = text.slice(-8000);
-      const r = json ? { ran: true, failing: jestFailures(json, wt), output, error: null } : { ran: false, failing: [], output, error: output.slice(-3000) || `npm test exited ${code} without results` };
+      const total = Number(json?.numTotalTests) || 0;
+      const r = total ? { ran: true, total, failing: jestFailures(json, wt), output, error: null }
+        : { ran: false, total: 0, failing: [], output, error: output.slice(-3000) || `npm test exited ${code} without results` };
       Object.assign(rec, { status: job.stopped ? 'stopped' : r.ran ? 'ok' : 'error', exit: code, durationMs: Date.now() - t0 });
       say(`■ [${p.name}] ${rec.label} ${r.ran ? `ran: ${r.failing.length} failing` : 'could not run'}`);
       save();
@@ -858,7 +858,7 @@ async function runBeTicket(p, t, job) {
     if (job.paused) return park('DEV', 'Paused for the team tea break (baseline restarts)');
     if (job.stopped) return block(p, t, 'Stopped by you during the baseline test run.');
     if (!r.ran) return block(p, t, `Baseline tests could not run on clean main:\n${r.error}\n\nStart what the tests need (DB, Redis), then retry.`);
-    Object.assign(t, { baseline: { ran: true, command: 'npm test', failing: r.failing, error: null }, note: null });
+    Object.assign(t, { baseline: { ran: true, command: 'npm test', total: r.total, failing: r.failing, error: null }, note: null });
     remember(p, t); save();
   }
 
@@ -914,13 +914,15 @@ async function runBeTicket(p, t, job) {
     if (job.stopped) return block(p, t, 'Stopped by you during the test run.');
     const failing = t.baseline.failing;
     const newFailures = tests.failing.filter((f) => !failing.includes(f));
-    if (!tests.ran || newFailures.length) {
+    const fewer = tests.ran && tests.total < (t.baseline.total ?? 0); // tests removed or skipped: never a pass
+    if (!tests.ran || fewer || newFailures.length) {
       feedback = !tests.ran ? `The test suite could not run after your change:\n${tests.error}`
+        : fewer ? `Fewer tests ran than on clean main (${tests.total} < ${t.baseline.total}). Do not remove, skip or narrow existing tests or the test script.\n\nOutput tail:\n${tests.output}`
         : `New test failures (not failing on main):\n${newFailures.map((f) => `- ${f}`).join('\n')}\n\nOutput tail:\n${tests.output}`;
       (t.attempts ??= []).push({ at: now(), kind: 'tests', cycle, verdict: 'FAIL', failing: newFailures });
       fs.appendFileSync(path.join(DATA, 'logs', p.id, t.runs.at(-1).log), `\n===== feedback to dev =====\n${feedback}\n`);
       remember(p, t);
-      say(`✗ [${p.name}] ${t.id} app test run: ${tests.ran ? `${newFailures.length} new failure(s)` : 'could not run'} (attempt ${cycle + 1}/${MAX_FIX_CYCLES + 1})`);
+      say(`✗ [${p.name}] ${t.id} app test run: ${!tests.ran ? 'could not run' : fewer ? 'fewer tests than main' : `${newFailures.length} new failure(s)`} (attempt ${cycle + 1}/${MAX_FIX_CYCLES + 1})`);
       t.status = 'CHANGES_REQUESTED'; save();
       continue;
     }

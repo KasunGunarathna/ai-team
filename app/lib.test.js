@@ -232,6 +232,6 @@ test('jestFailures lists failed tests and suites that failed to run, sorted', ()
     { name: '/wt/RECK-1/src/auth.test.ts', status: 'failed', assertionResults: [{ ancestorTitles: ['auth', 'login'], title: 'rejects bad pw', status: 'failed' }, { ancestorTitles: ['auth', 'login'], title: 'rejects bad pw', status: 'failed' }] },
     { name: '/wt/RECK-1/src/db.test.ts', status: 'failed', assertionResults: [] },
   ] };
-  assert.deepEqual(jestFailures(json, '/wt/RECK-1'), ['auth > login > rejects bad pw', 'src/db.test.ts']);
+  assert.deepEqual(jestFailures(json, '/wt/RECK-1'), ['src/auth.test.ts > auth > login > rejects bad pw', 'src/db.test.ts']);
   assert.deepEqual(jestFailures({}, '/wt'), []);
 });
