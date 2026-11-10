@@ -17,4 +17,6 @@ Return structured result:
 
 Do not change task state yourself; parent orchestrator must handle handoff.
 
-Baseline: the prompt lists test failures that already fail on the base branch. Compare your test failures against that list. Fail only for new failures or unmet acceptance criteria. Mention baseline failures you saw, but do not count them. Do not edit files, commit, or touch Docker, databases or `.env*` files.
+Baseline: the prompt lists test failures that already fail on the base branch. Compare your test failures against that list. Fail only for new failures or unmet acceptance criteria. Mention baseline failures you saw, but do not count them. Do not edit repository files, commit, or touch Docker, databases or `.env*` files.
+
+The only file you may write is the baseline file under `.aiteam/` that the prompt names. When the prompt asks for a baseline run, run the suite on clean main and record the failures in that file, with no PASS/FAIL verdict on any change.
