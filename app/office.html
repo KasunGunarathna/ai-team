@@ -119,7 +119,7 @@
 
 <div class="stage">
 <div id="agentCard" hidden role="dialog" aria-label="Agent"></div>
-<svg id="office" viewBox="0 0 1400 720" role="img" aria-labelledby="officeTitle">
+<svg id="office" viewBox="0 0 1400 880" role="img" aria-labelledby="officeTitle">
   <title id="officeTitle">Cartoon office where the AI agents work. Live status is listed below the picture.</title>
   <defs>
     <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1"><stop id="sky1" offset="0" stop-color="#7cc4f2"/><stop id="sky2" offset="1" stop-color="#d8f0ff"/></linearGradient>
@@ -136,6 +136,13 @@
   <rect y="246" width="1400" height="14" fill="#c8a173"/>
   <rect y="260" width="1400" height="460" fill="url(#planks)"/>
   <ellipse cx="300" cy="640" rx="200" ry="58" fill="#e8916f" opacity=".35"/>
+  <!-- BE ticket lounge: Rocco, Gigi and Quinn vibe-code on the sofa, no desks -->
+  <rect y="720" width="1400" height="160" fill="url(#planks)"/>
+  <rect y="716" width="1400" height="8" fill="#c8a173"/>
+  <ellipse cx="700" cy="842" rx="360" ry="34" fill="#9775fa" opacity=".22"/>
+  <g transform="translate(1040,742)"><rect width="230" height="40" rx="10" fill="#f3f0ff" stroke="#7950f2" stroke-width="3"/><text x="115" y="27" text-anchor="middle" font-size="17" font-weight="800" fill="#5f3dc4">🛋️ BE ticket lounge</text></g>
+  <g transform="translate(180,770)"><rect x="-14" y="30" width="28" height="34" rx="6" fill="#e8590c"/><path d="M0 30 C-24 6 -10 -22 0 -26 C10 -22 24 6 0 30Z" fill="#40c057"/></g>
+  <rect x="420" y="742" width="560" height="62" rx="24" fill="#7048e8"/>
   <ellipse cx="760" cy="652" rx="190" ry="52" fill="#7fb7a4" opacity=".25"/>
 
   <!-- windows -->
@@ -226,7 +233,7 @@
   <g id="agents"></g>
   <g id="front"></g>
 
-  <rect id="nightveil" width="1400" height="720" fill="#0b1026" opacity="0"/>
+  <rect id="nightveil" width="1400" height="880" fill="#0b1026" opacity="0"/>
   <g id="closedMsg" opacity="0" style="transition:opacity 1s" transform="translate(100,0)">
     <rect x="390" y="300" width="420" height="110" rx="20" fill="#fff" opacity=".95"/>
     <text x="600" y="345" text-anchor="middle" font-size="24" font-weight="800" fill="#2b2d42">🌙 Office closed</text>
@@ -269,7 +276,12 @@ const TEAM = [
   { role: 'frontend-dev', name: 'Pixel', title: 'Frontend dev', engine: 'Claude', shirt: '#e64980', hair: '#f59f00', skin: '#ffe0bd', style: 'long' },
   { role: 'qa', name: 'Bugsy', title: 'QA engineer', engine: 'Codex', shirt: '#0ca678', hair: '#7a4a2a', skin: '#d9a066', style: 'glasses' },
   { role: 'ui-ux', name: 'Iris', title: 'UI/UX designer', engine: 'Codex', shirt: '#f76707', hair: '#862e9c', skin: '#f1c27d', style: 'beret' },
+  // BE ticket team: no desks, they code on the lounge sofa with laptops (sofaX = seat).
+  { role: 'rc-dev', name: 'Rocco', title: 'ReviewCook dev', engine: 'Claude', shirt: '#f08c00', hair: '#343a40', skin: '#c68642', style: 'phones', sofaX: 540 },
+  { role: 'gl-dev', name: 'Gigi', title: 'GiftLips dev', engine: 'Claude', shirt: '#d6336c', hair: '#5f3dc4', skin: '#ffdbac', style: 'long', sofaX: 700 },
+  { role: 'be-qa', name: 'Quinn', title: 'Ticket QA', engine: 'Codex', shirt: '#2f9e44', hair: '#a0522d', skin: '#e0ac69', style: 'glasses', sofaX: 860 },
 ];
+const SOFA_Y = 772;
 const DESK_X = { 'pm-ba': 190, 'backend-dev': 450, 'frontend-dev': 710, 'qa': 970, 'ui-ux': 1260 };
 const SEAT_Y = 372;
 const SPOTS = [
@@ -286,7 +298,7 @@ const TEA = ['coffee', 'fridge', 'cooler', 'plant']; // tea-break spots during a
 const BOARD_SPOT = { x: 580, y: 262 };
 const CHARGE = ['sofa1', 'sofa2', 'pongL', 'pongR']; // usage limit: recharge in the lounge
 const DOOR = [{ id: 'door1', x: 290, y: 268 }, { id: 'door2', x: 372, y: 282, lift: 40 }]; // login problem: waiting at the door
-const engineOf = (role) => (role === 'qa' || role === 'ui-ux' ? 'codex' : 'claude');
+const engineOf = (role) => (['qa', 'ui-ux', 'be-qa'].includes(role) ? 'codex' : 'claude');
 const holdOf = (role) => { const e = engineOf(role); return S.authFail?.[e] ? 'auth' : S.limits?.[e] > Date.now() ? 'limit' : null; };
 const $ = (id) => document.getElementById(id);
 const NS = 'http://www.w3.org/2000/svg';
@@ -307,7 +319,7 @@ $('windows').append(...[40, 960].map((x) => svgEl(`
     <path d="M100 10V140M10 75H190" stroke="#fff" stroke-width="6"/>
   </g>`)));
 
-for (const t of TEAM) {
+for (const t of TEAM.filter((m) => !m.sofaX)) {
   const x = DESK_X[t.role];
   $('desks').append(svgEl(`
     <g class="desk" id="desk-${t.role}" transform="translate(${x},0)">
@@ -334,6 +346,23 @@ for (const t of TEAM) {
       <rect x="-4" y="438" width="8" height="16" fill="#868e96"/><ellipse cx="0" cy="458" rx="24" ry="6" fill="#00000026"/>
     </g>`));
 }
+// laptops on the BE lounge sofa: same .desk/.glow/.scr/.code/.lowbat parts, so working and low-battery states animate
+for (const t of TEAM.filter((m) => m.sofaX)) {
+  $('front').append(svgEl(`
+    <g class="desk" id="desk-${t.role}" transform="translate(${t.sofaX},0)">
+      <ellipse class="glow" cx="0" cy="796" rx="54" ry="30" fill="${t.shirt}" filter="url(#soft)"/>
+      <rect x="-37" y="774" width="74" height="46" rx="6" fill="#343a40"/>
+      <rect class="scr" x="-32" y="778" width="64" height="36" rx="3" fill="#212529"/>
+      <text class="lowbat" x="0" y="801" text-anchor="middle" font-size="11" font-weight="800" fill="#ff6b6b">🔋 LOW</text>
+      <clipPath id="clip-${t.role}"><rect x="-32" y="778" width="64" height="36" rx="3"/></clipPath>
+      <g clip-path="url(#clip-${t.role})"><g class="code">
+        ${Array.from({ length: 6 }, (_, i) => `<rect x="${-27 + (i % 3) * 6}" y="${782 + i * 9}" width="${20 + ((i * 17) % 26)}" height="4" rx="2" fill="${i % 2 ? t.shirt : '#69db7c'}"/>`).join('')}
+      </g></g>
+      <rect x="-44" y="818" width="88" height="7" rx="3" fill="#868e96"/>
+    </g>`));
+}
+$('front').append(svgEl(`<rect x="410" y="822" width="580" height="44" rx="16" fill="#5f3dc4"/><rect x="398" y="770" width="34" height="96" rx="15" fill="#5233b8"/><rect x="968" y="770" width="34" height="96" rx="15" fill="#5233b8"/>
+  ${TEAM.filter((m) => m.sofaX).map((m) => `<rect x="${m.sofaX - 50}" y="846" width="100" height="18" rx="6" fill="#fff8e7"/><text x="${m.sofaX}" y="859" text-anchor="middle" font-size="11" font-weight="700" fill="#2b2d42">${m.name} · ${m.title}</text>`).join('')}`));
 // sofa front and arms over seated agents
 $('front').append(svgEl(`<rect x="182" y="596" width="236" height="52" rx="16" fill="#4263eb"/><rect x="176" y="566" width="30" height="82" rx="14" fill="#3b5bdb"/><rect x="394" y="566" width="30" height="82" rx="14" fill="#3b5bdb"/>`));
 
@@ -430,7 +459,7 @@ function activeFor(role) {
 
 function taskTitle(active) {
   const p = S.projects.find((x) => x.id === active.projectId);
-  const id = active.label.replace(/-(dev|qa)-\d+$/, '');
+  const id = active.label.replace(/-(dev|qa|baseline)(-\d+)?(-s\d+)?$/, '');
   return p?.tasks.find((t) => t.id === id)?.title ?? '';
 }
 
@@ -445,16 +474,16 @@ function update() {
     const act = activeFor(t.role), isActive = !!act, onBreak = !!S.breaks[t.role], hold = isActive ? null : holdOf(t.role);
     setClass(t, 'away', !S.open && !isActive);
     setClass(t, 'typing', isActive);
-    setClass(t, 'back', isActive);
+    setClass(t, 'back', isActive && !t.sofaX); // sofa coders face the viewer
     setClass(t, 'tea', (!!paused || onBreak) && !isActive && !hold);
     setClass(t, 'charging', hold === 'limit');
     $('desk-' + t.role).classList.toggle('lowbat', hold === 'limit');
     $('desk-' + t.role).classList.toggle('on', isActive);
 
     if (isActive) {
-      place(t, DESK_X[t.role], SEAT_Y, 'desk', first);
-      const id = act.label.replace(/-(dev|qa)-\d+$/, '');
-      const verb = t.role === 'qa' ? '🔍 Testing' : t.role === 'pm-ba' ? '📝 Planning' : t.role === 'ui-ux' ? '🎨 Designing' : '⌨️ Coding';
+      if (t.sofaX) place(t, t.sofaX, SOFA_Y, 'desk', first); else place(t, DESK_X[t.role], SEAT_Y, 'desk', first);
+      const id = act.label.replace(/-(dev|qa|baseline)(-\d+)?(-s\d+)?$/, '');
+      const verb = t.role === 'qa' || t.role === 'be-qa' ? '🔍 Testing' : t.role === 'pm-ba' ? '📝 Planning' : t.role === 'ui-ux' ? '🎨 Designing' : '⌨️ Coding';
       speak(t, t.role === 'pm-ba' ? `${verb} ${clip(act.project, 22)}` : `${verb} ${id}${taskTitle(act) ? ' · ' + clip(taskTitle(act), 22) : ''}`);
     } else if (!S.open) {
       speak(t, '');
@@ -491,7 +520,7 @@ function update() {
 }
 
 function drawBoard() {
-  const rows = S.projects.slice(0, 4).map((p, i) => {
+  const rows = S.projects.filter((p) => p.kind !== 'be-ticket').slice(0, 4).map((p, i) => {
     const done = p.tasks.filter((t) => t.status === 'DONE').length, total = p.tasks.length || 1, y = 66 + i * 32;
     const name = (S.focus === p.id ? '🎯 ' : '') + clip(p.name, 20);
     return `<g class="row" data-pid="${p.id}"><title>Click to focus the whole team on this project (click again for all projects)</title><rect class="hit" x="12" y="${y - 20}" width="376" height="28" rx="6" fill="${S.focus === p.id ? '#fff3bf' : 'transparent'}"/>
@@ -518,7 +547,7 @@ function scenery() {
 
 function hud() {
   const open = S.open, paused = S.teaBreak;
-  const outages = ['claude', 'codex'].map((e) => ({ e, name: e === 'claude' ? 'Claude' : 'Codex', who: e === 'claude' ? 'Mira, Bolt and Pixel' : 'Bugsy and Iris', auth: S.authFail?.[e], until: S.limits?.[e] > Date.now() ? S.limits[e] : null })).filter((o) => o.auth || o.until);
+  const outages = ['claude', 'codex'].map((e) => ({ e, name: e === 'claude' ? 'Claude' : 'Codex', who: e === 'claude' ? 'Mira, Bolt, Pixel, Rocco and Gigi' : 'Bugsy, Iris and Quinn', auth: S.authFail?.[e], until: S.limits?.[e] > Date.now() ? S.limits[e] : null })).filter((o) => o.auth || o.until);
   for (const e of ['claude', 'codex']) {
     const o = outages.find((x) => x.e === e), chip = $(e + 'Chip');
     chip.hidden = !o;
@@ -603,7 +632,7 @@ function drawOutage(outages) {
 function drawUsage() {
   const fmtTok = (n) => (n >= 1e6 ? (n / 1e6).toFixed(1) + 'M' : n >= 1e3 ? Math.round(n / 1e3) + 'k' : String(n));
   const when = (ms) => new Date(ms).toLocaleString([], { weekday: 'short', hour: '2-digit', minute: '2-digit' });
-  for (const [key, name, who] of [['claude', 'Claude', 'Mira · Bolt · Pixel'], ['codex', 'Codex', 'Bugsy · Iris']]) {
+  for (const [key, name, who] of [['claude', 'Claude', 'Mira · Bolt · Pixel · Rocco · Gigi'], ['codex', 'Codex', 'Bugsy · Iris · Quinn']]) {
     const u = S.weekly?.[key], card = $('u-' + key);
     const left = u?.week ? Math.max(0, 100 - u.week.pct) : null;
     const color = left == null ? 'var(--muted)' : left <= 10 ? 'var(--bad)' : left <= 30 ? 'var(--warn)' : 'var(--ok)';
