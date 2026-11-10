@@ -53,6 +53,7 @@
   <div class="tabs" role="tablist">
     <button type="button" role="tab" data-tab="idea">Projects <span class="count"></span></button>
     <button type="button" role="tab" data-tab="ticket">Jira tickets <span class="count"></span></button>
+    <button type="button" role="tab" data-tab="be-ticket">BE tickets <span class="count"></span></button>
   </div>
   <div id="projects"></div>
 
@@ -81,6 +82,15 @@
     <button>Add ticket</button>
     <div class="err formErr"></div>
   </form>
+  <form id="newBeTicket" data-kind="be-ticket" hidden>
+    <h3>New BE ticket</h3>
+    <input name="ticketKey" placeholder="RECK-123 or GIF-123" required autocomplete="off">
+    <p class="muted beRepo" style="margin:-4px 0 8px">Key must start with RECK- or GIF-</p>
+    <textarea name="idea" placeholder="Paste the Jira ticket: summary, type, description, acceptance criteria" required></textarea>
+    <p class="muted" style="margin:0 0 8px">Rocco (ReviewCook) or Gigi (GiftLips) plans and builds it on a new branch from origin/main, Quinn reviews it, the branch is pushed, and you get a Jira comment to copy. You merge.</p>
+    <button>Add BE ticket</button>
+    <div class="err formErr"></div>
+  </form>
   <button class="ghost" id="teaBtn" style="width:100%;margin-top:12px">☕ Team tea break</button>
   <button class="ghost" id="soundBtn" style="width:100%;margin-top:8px" title="Sounds for task start, task done, blocked, approvals and a reminder every 2 minutes"></button>
   <p class="muted" id="usage"></p>
@@ -91,7 +101,7 @@
 <script src="/sounds.js"></script>
 <script>
 const COLS = [['BACKLOG','Backlog'],['READY','Ready'],['DESIGN','Design'],['IN_PROGRESS','Dev'],['QA','QA'],['DONE','Done'],['BLOCKED','Blocked']];
-const NOTE_HINT = { design: 'What should Iris (UI/UX) change? Required for Request changes', plan: 'Notes for PM/BA (used when you choose Re-plan)', question: 'Optional note (required for "Other")', permission: 'Optional note', blocked: 'Optional instructions for the developer agent on the retry' };
+const NOTE_HINT = { push: 'Optional note', design: 'What should Iris (UI/UX) change? Required for Request changes', plan: 'Notes for PM/BA (used when you choose Re-plan)', question: 'Optional note (required for "Other")', permission: 'Optional note', blocked: 'Optional instructions for the developer agent on the retry' };
 let S = { projects: [] }, openLog = null, actError = '';
 let sel = null, tab = 'idea'; try { sel = localStorage.getItem('sel'); tab = localStorage.getItem('tab') || 'idea'; } catch {}
 const kindOf = (p) => p.kind || 'idea';
@@ -133,13 +143,14 @@ async function refresh() {
   }
   document.getElementById('newProject').hidden = tab !== 'idea';
   document.getElementById('newTicket').hidden = tab !== 'ticket';
+  document.getElementById('newBeTicket').hidden = tab !== 'be-ticket';
   const items = S.projects.filter(p => kindOf(p) === tab);
-  if (!items.length) list.append(el('p', { className: 'muted', textContent: tab === 'ticket' ? 'No tickets yet.' : 'No projects yet.' }));
+  if (!items.length) list.append(el('p', { className: 'muted', textContent: tab === 'idea' ? 'No projects yet.' : 'No tickets yet.' }));
   for (const p of items) {
     const waiting = p.decisions.filter(d => !d.answer).length;
     list.append(el('div', { className: 'proj' + (p.id === sel ? ' sel' : ''), onclick: () => { sel = p.id; try { localStorage.setItem('sel', sel); } catch {} openLog = null; actError = ''; refresh(); } },
       el('div', { textContent: p.name }),
-      el('div', { className: 'muted', textContent: `${p.resumePlan ? 'PLANNING QUEUED' : p.status} · ${p.tasks.filter(t => t.status === 'DONE').length}/${p.tasks.length} done${p.auto ? ' · ⟳ auto' : p.runBudget ? ` · ${p.runBudget} queued` : ''}` }),
+      kindOf(p) === 'be-ticket' ? el('div', { className: 'muted', textContent: `${p.repo} · ${beStatus(p.tasks[0])}` }) : el('div', { className: 'muted', textContent: `${p.resumePlan ? 'PLANNING QUEUED' : p.status} · ${p.tasks.filter(t => t.status === 'DONE').length}/${p.tasks.length} done${p.auto ? ' · ⟳ auto' : p.runBudget ? ` · ${p.runBudget} queued` : ''}` }),
       waiting ? el('div', { className: 'flag', textContent: `⚑ ${waiting} waiting for you` }) : null));
   }
   render();
@@ -255,6 +266,7 @@ function render() {
   if (!p) { main.replaceChildren(el('p', { className: 'muted', textContent: 'Add or select a project.' })); return; }
   const busy = !!S.busy;
   const open = p.decisions.filter(d => !d.answer), answered = p.decisions.filter(d => d.answer);
+  const be = kindOf(p) === 'be-ticket';
   main.replaceChildren(...[
     S.teaBreak ? el('div', { className: 'busy row', style: 'background:var(--accent)' },
       el('span', { textContent: '☕ Team tea break: all agents are paused. Their tasks continue when you press Back to work.', style: 'flex:1' }),
@@ -264,15 +276,17 @@ function render() {
       el('button', { className: 'ghost', style: 'background:#fff', textContent: 'Resume now', onclick: () => act('/api/resume') })) : null,
     S.busy ? el('div', { className: 'busy row' }, el('span', { textContent: `Working (${S.jobs.length}/${S.maxAgents}): ${S.jobs.map((j) => j.label + (j.context ? ` 🧠${j.context.pct}%` : '')).join(' · ')}${S.focus ? ` · 🎯 focus: ${S.projects.find((x) => x.id === S.focus)?.name ?? ''}` : ''}`, style: 'flex:1' }),
       el('button', { className: 'ghost', style: 'background:#fff', textContent: 'Stop', onclick: () => { if (confirm('Stop the running agent? Its task will be marked BLOCKED so you can retry it.')) act('/api/stop'); } })) : null,
-    el('div', { className: 'row' }, el('h2', { textContent: p.name }), kindOf(p) === 'ticket' ? el('span', { className: 'pill', textContent: 'Jira ticket' }) : null, el('span', { className: 'pill', textContent: p.status })),
+    el('div', { className: 'row' }, el('h2', { textContent: p.name }), kindOf(p) === 'ticket' ? el('span', { className: 'pill', textContent: 'Jira ticket' }) : null,
+      be ? el('span', { className: 'pill', textContent: 'BE ticket' }) : null, be ? el('span', { className: 'pill', textContent: p.repo }) : null,
+      el('span', { className: 'pill', textContent: be ? beStatus(p.tasks[0]) : p.status })),
     el('p', { className: 'muted', style: 'margin:4px 0', textContent: `${p.path} · branch ${p.branch}` }),
     el('p', { className: 'tokens', style: 'margin:0', textContent: `Tokens used: ${usageText(p.usage)}${p.usage.costUsd ? ' (Claude API-equivalent estimate; your subscription is not billed per token)' : ''}` }),
     p.allowTools.length ? el('p', { className: 'muted', style: 'margin:4px 0', textContent: 'Extra allowed tools: ' + p.allowTools.join(', ') }) : null,
-    el('details', {}, el('summary', { textContent: kindOf(p) === 'ticket' ? 'Ticket details' : 'Idea' }), el('p', { textContent: p.idea, style: 'white-space:pre-wrap' })),
-    refsPanel(p, 'project', 'Design references for all screens'),
-    el('div', { className: 'row', style: 'align-items:flex-start;margin-top:8px' }, editForm(p), replanForm(p),
-      el('button', { className: 'ghost', textContent: kindOf(p) === 'ticket' ? 'Remove ticket' : 'Remove project', onclick: () => { if (confirm(`Remove "${p.name}" from AI Team? Its logs are deleted. Files and git history in ${p.path} are not touched.`)) act(`/api/projects/${p.id}/remove`); } })),
-    el('div', { className: 'row', style: 'margin-top:12px' },
+    el('details', {}, el('summary', { textContent: kindOf(p) === 'idea' ? 'Idea' : 'Ticket details' }), el('p', { textContent: p.idea, style: 'white-space:pre-wrap' })),
+    be ? null : refsPanel(p, 'project', 'Design references for all screens'),
+    el('div', { className: 'row', style: 'align-items:flex-start;margin-top:8px' }, be ? null : editForm(p), be ? null : replanForm(p),
+      el('button', { className: 'ghost', textContent: kindOf(p) === 'idea' ? 'Remove project' : 'Remove ticket', onclick: () => { if (confirm(`Remove "${p.name}" from AI Team? Its logs are deleted. Files and git history in ${p.path} are not touched.`)) act(`/api/projects/${p.id}/remove`); } })),
+    be ? null : el('div', { className: 'row', style: 'margin-top:12px' },
       p.resumePlan ? el('span', { className: 'pill', textContent: 'Planning queued: starts when the current agent finishes' }) : null,
       p.status === 'NEW' && !p.runs.length && !p.resumePlan ? el('button', { textContent: kindOf(p) === 'ticket' ? 'Analyse ticket with PM/BA' : 'Plan with PM/BA', disabled: busy, onclick: () => act(`/api/projects/${p.id}/plan`) }) : null,
       p.status === 'APPROVED' ? el('label', { className: 'row', style: 'gap:4px;cursor:pointer' },
@@ -284,10 +298,11 @@ function render() {
     el('div', { className: 'err', textContent: actError || p.error || '' }),
     open.length ? el('h3', { textContent: `Waiting for you (${open.length})` }) : null,
     ...open.map(d => decisionNode(p, d)),
+    be ? beCard(p, p.tasks[0]) : null,
     p.runs.length ? el('h3', { textContent: 'PM/BA runs' }) : null,
     p.runs.length ? runList(p, p.runs) : null,
-    p.tasks.length ? el('h3', { textContent: 'Board' }) : null,
-    p.tasks.length ? el('div', { className: 'board' }, ...COLS.map(([key, label]) => {
+    p.tasks.length && !be ? el('h3', { textContent: 'Board' }) : null,
+    p.tasks.length && !be ? el('div', { className: 'board' }, ...COLS.map(([key, label]) => {
       const tasks = p.tasks.filter(t => t.status === key || (key === 'IN_PROGRESS' && t.status === 'CHANGES_REQUESTED') || (key === 'DESIGN' && t.status === 'DESIGN_REVIEW'));
       return el('div', { className: 'col' }, el('h3', { textContent: `${label} (${tasks.length})` }), ...tasks.map(t =>
         el('div', { className: 'task ' + t.status },
@@ -310,6 +325,36 @@ function render() {
   for (const key of decisionNodes.keys()) if (!open.some(d => p.id + d.id === key) && key.startsWith(p.id)) decisionNodes.delete(key);
 }
 
+// BE tickets: one task (the Jira key); the card shows status, runs, branch override and the Jira comment to copy.
+const BE_REPO_OF = { 'RECK-': '→ ReviewCook API (Rocco)', 'GIF-': '→ GiftLips API (Gigi)' };
+const beStatus = (t) => !t ? '' : t.status !== 'DONE' ? t.status : t.outcome === 'pushed' ? 'DONE · pushed' : t.outcome === 'push_failed' ? 'DONE · push failed' : t.outcome === 'no_code' ? 'DONE · no code' : 'DONE';
+function beCard(p, t) {
+  if (!t) return null;
+  const branchForm = () => keep(p.id + 'branch', () => {
+    const input = el('input', { placeholder: `New branch name, e.g. ${p.ticketKey}-v2`, style: 'margin:0;flex:1' });
+    return el('div', { className: 'row', style: 'flex-wrap:nowrap;margin:6px 0' }, input,
+      el('button', { textContent: 'Use branch name', onclick: () => act(`/api/projects/${p.id}/branch`, { branch: input.value.trim() }) }));
+  });
+  const copyBtn = el('button', { textContent: 'Copy comment', onclick: async (e) => {
+    try { await navigator.clipboard.writeText(t.comment); e.target.textContent = 'Copied ✓'; } catch { e.target.textContent = 'Copy failed: select the text'; }
+    setTimeout(() => { e.target.textContent = 'Copy comment'; }, 2000);
+  } });
+  return el('div', { className: 'task ' + t.status, style: 'margin-top:12px' },
+    el('div', {}, el('b', { textContent: t.id }), ' ', el('span', { className: 'pill', textContent: `${t.owner === 'rc-dev' ? 'Rocco' : 'Gigi'} → Quinn` })),
+    el('div', { textContent: t.title }),
+    t.cycles ? el('div', { className: 'muted', textContent: `fix cycle ${t.cycles}/2` }) : null,
+    t.note ? el('div', { className: 'err', style: 'font-size:12px;white-space:pre-wrap', textContent: t.note }) : null,
+    t.status === 'BLOCKED' && /already exists/.test(t.note ?? '') ? branchForm() : null,
+    t.runs.length ? el('div', { className: 'tokens', textContent: 'Σ ' + usageText(t.usage) }) : null,
+    ['BLOCKED', 'DONE'].includes(t.status) ? retryForm(p, t) : null,
+    t.comment ? el('h3', { textContent: 'Jira comment' }) : null,
+    t.comment ? el('textarea', { readOnly: true, value: t.comment, style: 'min-height:220px;font-family:monospace;font-size:12px' }) : null,
+    t.comment ? el('div', { className: 'row' }, copyBtn,
+      /^https:\/\//.test(t.branchUrl ?? '') ? el('a', { href: t.branchUrl, target: '_blank', rel: 'noopener', textContent: '🔗 ' + t.branchUrl }) : t.branchUrl ? el('span', { className: 'muted', textContent: t.branchUrl }) : null) : null,
+    t.runs.length ? el('details', { open: openRuns.has(p.id + t.id), ontoggle: (e) => e.target.open ? openRuns.add(p.id + t.id) : openRuns.delete(p.id + t.id) },
+      el('summary', { className: 'muted', textContent: `Runs (${t.runs.length})` }), runList(p, t.runs)) : null);
+}
+
 async function loadLog() {
   const pre = document.getElementById('log'); if (!pre) return;
   const r = await fetch(`/api/log?project=${encodeURIComponent(openLog.project)}&file=${encodeURIComponent(openLog.run.log)}`);
@@ -328,6 +373,17 @@ for (const b of document.querySelectorAll('.tabs button')) b.onclick = () => {
   const first = S.projects.find(p => kindOf(p) === tab && p.id === sel) || S.projects.find(p => kindOf(p) === tab);
   sel = first?.id ?? null; openLog = null; actError = ''; refresh();
 };
+{
+  const form = document.getElementById('newBeTicket'), err = form.querySelector('.formErr'), hint = form.querySelector('.beRepo');
+  form.ticketKey.oninput = () => { const k = form.ticketKey.value.trim().toUpperCase(); hint.textContent = Object.entries(BE_REPO_OF).find(([pre]) => k.startsWith(pre))?.[1] ?? 'Key must start with RECK- or GIF-'; };
+  form.onsubmit = async (e) => {
+    e.preventDefault();
+    try {
+      const { id } = await api('/api/projects', { kind: 'be-ticket', ticketKey: form.ticketKey.value.trim().toUpperCase(), idea: form.idea.value });
+      sel = id; try { localStorage.setItem('sel', id); } catch {} form.reset(); form.ticketKey.oninput(); err.textContent = ''; refresh();
+    } catch (x) { err.textContent = x.message; }
+  };
+}
 for (const form of document.querySelectorAll('#newProject, #newTicket')) {
   const err = form.querySelector('.formErr');
   form.querySelector('.browse').onclick = async (e) => {
