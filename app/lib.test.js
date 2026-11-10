@@ -46,6 +46,15 @@ test('formatClaudeEvent renders tools and captures usage + denials', () => {
   assert.equal(acc.denials.length, 1);
 });
 
+test('formatClaudeEvent tracks context size, recent notes and the context window', () => {
+  const acc = {};
+  formatClaudeEvent({ type: 'system', subtype: 'init', model: 'm' }, acc);
+  formatClaudeEvent({ type: 'assistant', message: { usage: { input_tokens: 2, cache_read_input_tokens: 1000, cache_creation_input_tokens: 500 }, content: [{ type: 'text', text: ' Done step 1 ' }] } }, acc);
+  assert.deepEqual([acc.model, acc.context, acc.notes], ['m', 1502, ['Done step 1']]);
+  formatClaudeEvent({ type: 'result', subtype: 'success', modelUsage: { m: { contextWindow: 200000 } } }, acc);
+  assert.equal(acc.window, 200000);
+});
+
 test('formatCodexEvent renders commands and sums usage across turns', () => {
   const acc = {};
   assert.equal(formatCodexEvent({ type: 'item.started', item: { type: 'command_execution', command: 'npm test' } }, acc), '→ $ npm test');

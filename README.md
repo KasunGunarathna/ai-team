@@ -61,6 +61,13 @@ The terminal shows what the app is doing: projects added, planning, every agent 
 - **Whole team:** "☕ Team tea break" stops every agent immediately. Each interrupted task keeps its work in its worktree and goes back to READY (not counted as a failure). "▶ Back to work" starts them again: a developer continues from the partial work, an interrupted QA run starts over, and interrupted planning runs again. **Stop** (on the board) stops all running agents immediately.
 - **New dependencies:** each task's worktree starts without `node_modules`, so DEV installs dependencies in it. This takes longer and uses more disk.
 
+## Context and fresh sessions
+
+- **Every task starts fresh:** each step (planning, every developer attempt, every QA run) is a new Claude Code or Codex session, so one task's conversation never fills up the next one.
+- **Context meter:** while a Claude agent works, "Team right now" and the agent card show how full its context is, e.g. "🧠 20% context used · 160k left". The board's banner shows it too. Codex does not report this while it works, so QA shows no meter.
+- **Fresh session at 80%:** when a developer's session reaches `CONTEXT_HANDOFF_AT` percent (default 80), the app ends it and starts a fresh session for the same attempt. The new session gets a memory note: what the last session said most recently, and which files it had changed (`git status`). The run list shows the old run as "handoff" and the new one as `-s2`, `-s3` and so on. After 3 hand-offs in one attempt, the task is blocked: it is probably too big and should be split.
+- **Window size:** the app learns each model's context window from finished runs, and assumes 200k until then.
+
 ## Sounds
 
 Press **🔕 Sounds off** in the office header or the board sidebar to turn sounds on (you hear a ding-dong to confirm). The setting is remembered in that browser. Browsers only play sound after you click the page once, so after a reload, click anywhere.

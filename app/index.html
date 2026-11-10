@@ -223,7 +223,7 @@ function render() {
     S.pausedUntil ? el('div', { className: 'busy row', style: 'background:var(--accent)' },
       el('span', { textContent: `⏸ Usage limit reached. Paused until ${new Date(S.pausedUntil).toLocaleString()}, then work continues automatically.`, style: 'flex:1' }),
       el('button', { className: 'ghost', style: 'background:#fff', textContent: 'Resume now', onclick: () => act('/api/resume') })) : null,
-    S.busy ? el('div', { className: 'busy row' }, el('span', { textContent: `Working (${S.jobs.length}/${S.maxAgents}): ${S.busy}${S.focus ? ` · 🎯 focus: ${S.projects.find((x) => x.id === S.focus)?.name ?? ''}` : ''}`, style: 'flex:1' }),
+    S.busy ? el('div', { className: 'busy row' }, el('span', { textContent: `Working (${S.jobs.length}/${S.maxAgents}): ${S.jobs.map((j) => j.label + (j.context ? ` 🧠${j.context.pct}%` : '')).join(' · ')}${S.focus ? ` · 🎯 focus: ${S.projects.find((x) => x.id === S.focus)?.name ?? ''}` : ''}`, style: 'flex:1' }),
       el('button', { className: 'ghost', style: 'background:#fff', textContent: 'Stop', onclick: () => { if (confirm('Stop the running agent? Its task will be marked BLOCKED so you can retry it.')) act('/api/stop'); } })) : null,
     el('div', { className: 'row' }, el('h2', { textContent: p.name }), kindOf(p) === 'ticket' ? el('span', { className: 'pill', textContent: 'Jira ticket' }) : null, el('span', { className: 'pill', textContent: p.status })),
     el('p', { className: 'muted', style: 'margin:4px 0', textContent: `${p.path} · branch ${p.branch}` }),

@@ -17,6 +17,8 @@ const MAX_FIX_CYCLES = 2;
 const RUN_TIMEOUT_MS = 45 * 60_000;
 const MAX_AGENTS = Math.max(1, Number(process.env.MAX_AGENTS || 2)); // agents working at the same time
 const WT = path.join(DATA, 'worktrees'); // one git worktree per running task
+const HANDOFF_AT = Number(process.env.CONTEXT_HANDOFF_AT || 80); // % of context: hand a developer's work to a fresh session
+const MAX_HANDOFFS = 3; // per task attempt, so a task cannot loop forever
 const NICK = { 'pm-ba': 'Mira', 'backend-dev': 'Bolt', 'frontend-dev': 'Pixel', qa: 'Bugsy' };
 
 const PM_TOOLS = ['Read', 'Write', 'Edit', 'Glob', 'Grep'];
@@ -29,6 +31,7 @@ const DEV_TOOLS = [
 fs.mkdirSync(path.join(DATA, 'logs'), { recursive: true });
 const state = fs.existsSync(STATE_FILE) ? JSON.parse(fs.readFileSync(STATE_FILE, 'utf8')) : { projects: [] };
 state.breaks ??= {}; // role -> true while that agent is on a break
+state.contextWindows ??= {}; // model -> context window size learned from earlier runs
 // Migrate older state and put work interrupted by a crash back where it can be retried.
 for (const p of state.projects) {
   p.decisions ??= [];
@@ -77,14 +80,14 @@ function killTree(child) {
 }
 
 // Spawn an agent CLI that prints JSON lines; write a readable log as events arrive.
-function run(cmd, args, cwd, logFile, format, tag, job) {
+function run(cmd, args, cwd, logFile, format, tag, job, onEvent) {
   return new Promise((resolve) => {
     const acc = { usage: null, text: '', denials: [] };
     const log = fs.createWriteStream(logFile, { flags: 'a' });
     const writeLine = (line) => {
       if (!line.trim()) return;
       let out;
-      try { out = format(JSON.parse(line), acc); } catch { out = line; }
+      try { out = format(JSON.parse(line), acc); onEvent?.(acc); } catch { out = line; }
       if (!out) return;
       log.write(out + '\n');
       if (SHOW_AGENT) for (const l of out.split('\n')) if (l.trim()) console.log(`          ${tag} ${clip(l, 220)}`);
@@ -113,7 +116,8 @@ function run(cmd, args, cwd, logFile, format, tag, job) {
 
 // Records each agent run (log file, duration, tokens) on the project or task that owns it.
 // Waits until that agent is free (another job may be using it). Returns null if the job was stopped while waiting.
-async function agentRun(p, owner, label, engine, args, job, cwd = p.path) {
+// handoffAt (percent): end the session once its context is this full; the caller starts a fresh one with its notes.
+async function agentRun(p, owner, label, engine, args, job, cwd = p.path, handoffAt = null) {
   const role = engine === 'codex' ? 'qa' : owner === p ? 'pm-ba' : owner.owner;
   job.needs = role;
   while (roleBusy[role] && roleBusy[role] !== job.id) { if (job.stopped || job.paused) { job.needs = null; return null; } await sleep(1500); }
@@ -127,15 +131,30 @@ async function agentRun(p, owner, label, engine, args, job, cwd = p.path) {
   owner.runs.push(rec);
   save();
   const t0 = Date.now();
-  const r = await run(engine, args, cwd, path.join(dir, log), engine === 'claude' ? formatClaudeEvent : formatCodexEvent, `│ ${label}`, job);
+  job.context = null;
+  const onEvent = (acc) => {
+    if (!acc.context) return;
+    const window = state.contextWindows[acc.model] || 200_000; // assume 200k until this model's window is known
+    job.context = { used: acc.context, window, pct: Math.min(100, Math.round((100 * acc.context) / window)), model: acc.model };
+    rec.contextPct = Math.max(rec.contextPct ?? 0, job.context.pct);
+    if (handoffAt && job.context.pct >= handoffAt && !job.handoff) {
+      job.handoff = true;
+      say(`🧠 [${p.name}] ${label} context ${job.context.pct}% full: handing off to a fresh session`);
+      killTree(job.child);
+    }
+  };
+  const r = await run(engine, args, cwd, path.join(dir, log), engine === 'claude' ? formatClaudeEvent : formatCodexEvent, `│ ${label}`, job, onEvent);
+  if (r.model && r.window) state.contextWindows[r.model] = r.window;
+  const handedOff = !!job.handoff;
+  job.handoff = false; job.context = null;
   Object.assign(job, { role: null, needs: null, agentLabel: null });
   delete roleBusy[role];
   const limited = job.stopped || job.paused ? null : limitUntil(r, r.code);
   if (r.rate?.unifiedWindows) state.claudeUsage = { fiveHour: r.rate.unifiedWindows.five_hour, sevenDay: r.rate.unifiedWindows.seven_day, at: now() };
-  Object.assign(rec, { status: job.stopped ? 'stopped' : job.paused ? 'paused' : limited ? 'limited' : r.code === 0 ? 'ok' : 'error', exit: r.code, durationMs: Date.now() - t0, usage: r.usage });
+  Object.assign(rec, { status: job.stopped ? 'stopped' : job.paused ? 'paused' : handedOff ? 'handoff' : limited ? 'limited' : r.code === 0 ? 'ok' : 'error', exit: r.code, durationMs: Date.now() - t0, usage: r.usage });
   say(`■ [${p.name}] ${label} ${rec.status} (exit ${r.code}) in ${Math.round(rec.durationMs / 1000)}s · ${tok(r.usage)}`);
   save();
-  return { ...r, limited, logPath: path.join(dir, log) };
+  return { ...r, limited: handedOff ? null : limited, handedOff, logPath: path.join(dir, log) };
 }
 
 // Agent config files: a change here could grant tools or hooks to the next agent run, so agents may not touch them.
@@ -423,6 +442,7 @@ async function runTask(p, t, job) {
     : state.pausedUntil > Date.now() ? `Waiting for usage limit reset (${new Date(state.pausedUntil).toLocaleTimeString()})` : null;
   const limitedAt = (stage, until) => { pauseForLimit(until, `${t.id} ${stage}`); return park(stage, `Waiting for usage limit reset (${new Date(until).toLocaleTimeString()})`); };
 
+  let handoffs = 0;
   for (let cycle = t.cycles || 0; cycle <= MAX_FIX_CYCLES; cycle++) {
     t.cycles = cycle; t.note = null;
     if (!t.skipDev) {
@@ -434,15 +454,21 @@ async function runTask(p, t, job) {
         productDecisions(p) +
         (t.instructions ? `\n\nInstructions from the product owner for this task:\n${t.instructions}` : '') +
         (feedback ? `\n\nYour previous attempt was not accepted. Fix every point:\n\n${feedback}` : '') +
-        (t.interrupted ? '\n\nYour previous session was interrupted by a break. Continue from the current state of the workspace.' : '');
-      t.interrupted = false;
+        (t.interrupted ? '\n\nYour previous session was interrupted by a break. Continue from the current state of the workspace.' : '') +
+        (t.handoff ? `\n\nYour previous session ran out of context and this is a fresh one. Do not redo finished work. Memory from that session:\n\n${t.handoff}` : '');
+      t.interrupted = false; t.handoff = null;
       const cfg = configChanges(p, wt);
       if (cfg) return block(p, t, `Agent configuration files were changed in this task's workspace, so no agent will run there until you review them:\n${cfg}\nWorkspace: ${wt}`);
-      const dev = await agentRun(p, t, `${t.id}-dev-${cycle}`, 'claude', claudeArgs(t.owner, devPrompt, [...DEV_TOOLS, ...p.allowTools]), job, wt);
+      const dev = await agentRun(p, t, `${t.id}-dev-${cycle}${handoffs ? `-s${handoffs + 1}` : ''}`, 'claude', claudeArgs(t.owner, devPrompt, [...DEV_TOOLS, ...p.allowTools]), job, wt, HANDOFF_AT);
       if (job.paused) { t.interrupted = true; return park('DEV', 'Paused for the team tea break'); }
       if (!dev || job.stopped) return block(p, t, 'Stopped by you during development.');
       raiseDenials(p, dev.denials, `${t.id} (${t.owner})`);
       if (dev.limited) return limitedAt('DEV', dev.limited);
+      if (dev.handedOff) {
+        if (++handoffs > MAX_HANDOFFS) return block(p, t, `The developer filled its context ${MAX_HANDOFFS + 1} times in one attempt. The task is probably too big: split it, or retry with narrower instructions.`);
+        t.handoff = clip(`What it said last:\n${(dev.notes ?? []).join('\n---\n')}\n\nFiles changed so far (git status):\n${git(wt, 'status', '--short') || '(none)'}`, 6000);
+        cycle--; continue; // same attempt, fresh session
+      }
     }
     t.skipDev = false;
     const hold = holdFor('qa');
@@ -578,7 +604,8 @@ const server = http.createServer(async (req, res) => {
       return res.end(fs.readFileSync(path.join(ROOT, 'templates', file)));
     }
     if (req.method === 'GET' && url.pathname === '/api/state') return send(res, 200, { busy: busyText(), busyProjects: [...new Set([...jobs.values()].map((j) => j.projectId))], maxAgents: MAX_AGENTS, focus: state.focus || null, breaks: state.breaks,
-      jobs: [...jobs.values()].map(({ id, kind, projectId, project, taskId, label, role, agentLabel, agentStartedAt, needs }) => ({ id, kind, projectId, project, taskId, label, role, agentLabel, agentStartedAt, needs })),
+      jobs: [...jobs.values()].map(({ id, kind, projectId, project, taskId, label, role, agentLabel, agentStartedAt, needs, context }) => ({ id, kind, projectId, project, taskId, label, role, agentLabel, agentStartedAt, needs, context })),
+      handoffAt: HANDOFF_AT,
       teaBreak: !!state.teaBreak, workHours: state.workHours || null, open: isOpen(state.workHours), pausedUntil: state.pausedUntil || null, claudeUsage: state.claudeUsage || null, dailyAt: DAILY_AT, dailyTasks: DAILY_TASKS, projects: state.projects.map(view) });
 
     if (req.method === 'GET' && parts[1] === 'log') {

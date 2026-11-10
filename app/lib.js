@@ -68,11 +68,18 @@ export function formatClaudeEvent(e, acc) {
       return st && st !== 'allowed' ? `⚠ usage limit status: ${st}${acc.rate.resetsAt ? ` (resets ${new Date(acc.rate.resetsAt * 1000).toLocaleTimeString()})` : ''}` : null;
     }
     case 'system':
+      if (e.subtype === 'init') acc.model = e.model;
       return e.subtype === 'init' ? `▶ Claude Code · model ${e.model}` : null;
-    case 'assistant':
+    case 'assistant': {
+      // Context in use = everything sent to the model on this turn.
+      const u = e.message?.usage;
+      if (u) acc.context = (u.input_tokens ?? 0) + (u.cache_read_input_tokens ?? 0) + (u.cache_creation_input_tokens ?? 0);
+      const said = (e.message?.content ?? []).filter((c) => c.type === 'text' && c.text.trim()).map((c) => c.text.trim());
+      if (said.length) acc.notes = [...(acc.notes ?? []), ...said].slice(-12); // memory for a fresh session
       return (e.message?.content ?? [])
         .map((c) => (c.type === 'text' ? c.text : c.type === 'tool_use' ? `→ ${c.name}: ${clip(brief(c.input), 300)}` : null))
         .filter(Boolean).join('\n') || null;
+    }
     case 'user':
       return (e.message?.content ?? [])
         .filter((c) => c.type === 'tool_result')
@@ -84,6 +91,7 @@ export function formatClaudeEvent(e, acc) {
       acc.denials = e.permission_denials ?? [];
       acc.isError = !!e.is_error;
       acc.apiStatus = e.api_error_status ?? null;
+      acc.window = Object.values(e.modelUsage ?? {}).find((m) => m.contextWindow)?.contextWindow ?? null;
       return `■ ${e.subtype} · ${e.num_turns ?? '?'} turns · ${Math.round((e.duration_ms ?? 0) / 1000)}s`;
     }
     default:

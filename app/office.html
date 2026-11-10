@@ -357,6 +357,8 @@ const setClass = (t, cls, on) => $('ag-' + t.role).classList.toggle(cls, on);
 let S = null, first = true;
 const pick = (a) => a[Math.floor(Math.random() * a.length)];
 const hhmm = (ms) => new Date(ms).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+// "34% context used · 660k left" (Claude reports this live; Codex does not).
+const ctxText = (c) => !c ? 'context: —' : `${c.pct}% context used · ${c.window - c.used >= 1000 ? Math.round((c.window - c.used) / 1000) + 'k' : c.window - c.used} left (fresh session at ${S.handoffAt}%)`;
 const left = (ms) => { const m = Math.max(0, Math.round((ms - Date.now()) / 60000)); return m >= 60 ? `${Math.floor(m / 60)}h ${m % 60}m` : `${m}m`; };
 
 function freeSpot(role) {
@@ -367,7 +369,7 @@ function freeSpot(role) {
 // The job an agent is working on right now, shaped like { label, project, projectId, startedAt }.
 function activeFor(role) {
   const j = S.jobs.find((x) => x.role === role);
-  return j && { label: j.agentLabel, project: j.project, projectId: j.projectId, startedAt: j.agentStartedAt };
+  return j && { label: j.agentLabel, project: j.project, projectId: j.projectId, startedAt: j.agentStartedAt, context: j.context };
 }
 
 function taskTitle(active) {
@@ -478,7 +480,9 @@ function hud() {
     const b = document.createElement('b'); b.textContent = t.name;
     const m = document.createElement('span'); m.className = 'muted'; m.textContent = ` ${t.title} · ${t.engine}`;
     const d = document.createElement('div'); d.className = 'muted'; d.textContent = (isActive ? '🟢 ' : '') + doing;
-    txt.append(b, m, d); row.append(dot, txt); return row;
+    txt.append(b, m, d);
+    if (isActive && act.context) txt.append(ctxBar(act.context));
+    row.append(dot, txt); return row;
   }));
 
   const runs = S.projects.flatMap((p) => [...p.runs.map((r) => ({ r, p, role: 'pm-ba' })), ...p.tasks.flatMap((t) => t.runs.map((r) => ({ r, p, role: r.engine === 'codex' ? 'qa' : t.owner })))])
@@ -493,6 +497,13 @@ function hud() {
 
   const cu = S.claudeUsage;
   $('usageTxt').textContent = cu ? `Claude usage: 5-hour ${Math.round((cu.fiveHour?.utilization ?? 0) * 100)}% · 7-day ${Math.round((cu.sevenDay?.utilization ?? 0) * 100)}%` : '';
+}
+
+function ctxBar(c) {
+  const wrap = document.createElement('div'); wrap.className = 'muted'; wrap.style.fontSize = '12px';
+  const bar = document.createElement('div'); bar.style.cssText = 'height:6px;border-radius:3px;background:var(--line);margin:3px 0;max-width:220px;overflow:hidden';
+  const fill = document.createElement('div'); fill.style.cssText = `height:100%;width:${c.pct}%;background:${c.pct >= S.handoffAt - 10 ? 'var(--warn)' : 'var(--accent)'}`;
+  bar.append(fill); wrap.append(bar, document.createTextNode('🧠 ' + ctxText(c))); return wrap;
 }
 
 let formLoaded = false;
@@ -576,6 +587,7 @@ function drawCard() {
     el('button', { className: 'x', textContent: '×', title: 'Close', onclick: () => { cardRole = null; drawCard(); } }),
     el('h3', { textContent: `${t.name}` }),
     el('div', { className: 'muted', textContent: `${t.title} · ${t.engine}` }),
+    act && act.context ? ctxBar(act.context) : null,
     el('p', { style: 'margin:8px 0 0', textContent: act ? `Working on ${act.label} in ${act.project}.${onBreak ? ' Goes on a break after this step.' : ''}` : onBreak ? 'On a break. New work for this agent waits.' : 'Free. Picks up the next task for this role.' }),
     el('div', { className: 'row' },
       el('button', { textContent: onBreak ? '▶ Back to work' : '☕ Send on a break', onclick: () => post('/api/break', { role: t.role, on: !onBreak }) }),
