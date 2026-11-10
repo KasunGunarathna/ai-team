@@ -53,7 +53,7 @@
   <div class="tabs" role="tablist">
     <button type="button" role="tab" data-tab="idea">Projects <span class="count"></span></button>
     <button type="button" role="tab" data-tab="ticket">Jira tickets <span class="count"></span></button>
-    <button type="button" role="tab" data-tab="be-ticket">BE tickets <span class="count"></span></button>
+    <button type="button" role="tab" data-tab="be-ticket">Squad tickets <span class="count"></span></button>
   </div>
   <div id="projects"></div>
 
@@ -83,11 +83,11 @@
     <div class="err formErr"></div>
   </form>
   <form id="newBeTicket" data-kind="be-ticket" hidden>
-    <h3>New BE ticket</h3>
+    <h3>New squad ticket</h3>
     <input name="ticketKey" placeholder="RECK-123 or GIF-123" required autocomplete="off">
     <p class="muted beRepo" style="margin:-4px 0 8px">Key must start with RECK- or GIF-</p>
     <textarea name="idea" placeholder="Paste the Jira ticket: summary, type, description, acceptance criteria" required></textarea>
-    <p class="muted" style="margin:0 0 8px">Rocco (ReviewCook) or Gigi (GiftLips) plans and builds it on a new branch from origin/main, Quinn reviews it, the branch is pushed, and you get a Jira comment to copy. You merge.</p>
+    <p class="muted" style="margin:0 0 8px">It joins the to-do list. Captain Plan hands it to Rocket Rocco (ReviewCook) or Giggly Gigi (GiftLips), who plans and builds it on a new branch from origin/main. Detective Quinn reviews it, the branch is pushed, and you get a Jira comment plus a Create PR link. You open the draft PR and merge.</p>
     <button>Add BE ticket</button>
     <div class="err formErr"></div>
   </form>
@@ -145,6 +145,7 @@ async function refresh() {
   document.getElementById('newTicket').hidden = tab !== 'ticket';
   document.getElementById('newBeTicket').hidden = tab !== 'be-ticket';
   const items = S.projects.filter(p => kindOf(p) === tab);
+  if (tab === 'be-ticket') items.sort((a, b) => squadRank(a.tasks[0]) - squadRank(b.tasks[0])); // to-do in queue order, then active, blocked, done
   if (!items.length) list.append(el('p', { className: 'muted', textContent: tab === 'idea' ? 'No projects yet.' : 'No tickets yet.' }));
   for (const p of items) {
     const waiting = p.decisions.filter(d => !d.answer).length;
@@ -326,8 +327,12 @@ function render() {
 }
 
 // BE tickets: one task (the Jira key); the card shows status, runs, branch override and the Jira comment to copy.
-const BE_REPO_OF = { 'RECK-': '→ ReviewCook API (Rocco)', 'GIF-': '→ GiftLips API (Gigi)' };
-const beStatus = (t) => !t ? '' : t.status !== 'DONE' ? t.status : t.outcome === 'pushed' ? 'DONE · pushed' : t.outcome === 'push_failed' ? 'DONE · push failed' : t.outcome === 'no_code' ? 'DONE · no code' : 'DONE';
+const BE_REPO_OF = { 'RECK-': '→ ReviewCook API (Rocket Rocco)', 'GIF-': '→ GiftLips API (Giggly Gigi)' };
+// Squad queue: same order as Captain Plan (priority, then when added).
+const squadQueue = () => S.projects.filter(p => kindOf(p) === 'be-ticket').map(p => p.tasks[0]).filter(t => t?.status === 'TODO')
+  .sort((a, b) => (b.priority ?? 0) - (a.priority ?? 0) || (a.queuedAt ?? 0) - (b.queuedAt ?? 0));
+const squadRank = (t) => !t ? 9e15 : t.status === 'TODO' ? squadQueue().indexOf(t) : ({ BLOCKED: 2e15, DONE: 3e15 }[t.status] ?? 1e15);
+const beStatus = (t) => !t ? '' : t.status === 'TODO' ? `TODO · #${squadQueue().indexOf(t) + 1} in queue` : t.status !== 'DONE' ? t.status : t.outcome === 'pushed' ? 'DONE · pushed' : t.outcome === 'push_failed' ? 'DONE · push failed' : t.outcome === 'no_code' ? 'DONE · no code' : 'DONE';
 function beCard(p, t) {
   if (!t) return null;
   const branchForm = () => keep(p.id + 'branch', () => {
@@ -340,7 +345,7 @@ function beCard(p, t) {
     setTimeout(() => { e.target.textContent = 'Copy comment'; }, 2000);
   } });
   return el('div', { className: 'task ' + t.status, style: 'margin-top:12px' },
-    el('div', {}, el('b', { textContent: t.id }), ' ', el('span', { className: 'pill', textContent: `${t.owner === 'rc-dev' ? 'Rocco' : 'Gigi'} → Quinn` })),
+    el('div', {}, el('b', { textContent: t.id }), ' ', el('span', { className: 'pill', textContent: `${t.owner === 'rc-dev' ? 'Rocket Rocco' : 'Giggly Gigi'} → Detective Quinn` })),
     el('div', { textContent: t.title }),
     t.cycles ? el('div', { className: 'muted', textContent: `fix cycle ${t.cycles}/2` }) : null,
     t.note ? el('div', { className: 'err', style: 'font-size:12px;white-space:pre-wrap', textContent: t.note }) : null,
@@ -350,6 +355,7 @@ function beCard(p, t) {
     t.comment ? el('h3', { textContent: 'Jira comment' }) : null,
     t.comment ? el('textarea', { readOnly: true, value: t.comment, style: 'min-height:220px;font-family:monospace;font-size:12px' }) : null,
     t.comment ? el('div', { className: 'row' }, copyBtn,
+      /^https:\/\/github\.com\//.test(t.prUrl ?? '') ? el('a', { href: t.prUrl, target: '_blank', rel: 'noopener', textContent: '🔀 Create PR (draft)' }) : null,
       /^https:\/\//.test(t.branchUrl ?? '') ? el('a', { href: t.branchUrl, target: '_blank', rel: 'noopener', textContent: '🔗 ' + t.branchUrl }) : t.branchUrl ? el('span', { className: 'muted', textContent: t.branchUrl }) : null) : null,
     t.runs.length ? el('details', { open: openRuns.has(p.id + t.id), ontoggle: (e) => e.target.open ? openRuns.add(p.id + t.id) : openRuns.delete(p.id + t.id) },
       el('summary', { className: 'muted', textContent: `Runs (${t.runs.length})` }), runList(p, t.runs)) : null);

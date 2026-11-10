@@ -129,29 +129,35 @@ Open the **Jira tickets** tab, choose the existing repo folder, enter the Jira k
 
 `.aiteam/` is added to the repo's `.git/info/exclude`, so AI planning files never appear in your commits or PR. Several tickets can share one repo: before each task the app switches to that ticket's branch, as long as there are no uncommitted changes. Push the branch and open the PR yourself.
 
-## BE ticket team (ReviewCook and GiftLips APIs)
+## Superpowers & Ponytail Squad (ReviewCook and GiftLips APIs)
 
-A separate backend team works only on Jira tickets for two repos. It never takes agents from the project team, and the project team never takes theirs. Both teams can work at the same time.
+A separate backend squad works only on Jira tickets for two repos, in its own **Squad room**. In the office, use the **🏢 Main office / 🦸 Squad room** tabs. The squad never takes agents from the project team, and the project team never takes theirs.
 
 | Agent | Role | Engine | Repo |
 |---|---|---|---|
-| Rocco | ReviewCook dev | Claude | `~/Development/QRTiger/ReviewCook/reviewcook-api` (keys `RECK-…`) |
-| Gigi | GiftLips dev | Claude | `~/Development/QRTiger/GiftLips/giftlips-api` (keys `GIF-…`) |
-| Quinn | Ticket QA, both repos | Codex | |
+| 🦸 Captain Plan | PM: hands out tickets | the app (no AI, no quota) | |
+| 🧢 Rocket Rocco | ReviewCook dev | Claude, with the superpowers and ponytail plugins | `~/Development/QRTiger/ReviewCook/reviewcook-api` (keys `RECK-…`) |
+| 🎀 Giggly Gigi | GiftLips dev | Claude, with the superpowers and ponytail plugins | `~/Development/QRTiger/GiftLips/giftlips-api` (keys `GIF-…`) |
+| 🔍 Detective Quinn | QA, both repos | Codex | |
 
-Open the **BE tickets** tab, type the Jira key, and paste the ticket (summary, type, description, acceptance criteria). The key picks the repo; any other prefix is rejected. Work starts as soon as that repo's dev is free. There is no PM/BA step and no plan approval.
+Open the **Squad tickets** tab on the board, type the Jira key, and paste the ticket. It joins the **to-do list**, which also shows on the board in the Squad room. Captain Plan hands tickets out in the order you added them: `RECK-` tickets go to Rocco, `GIF-` tickets to Gigi, and each dev works on one ticket at a time. Tickets that were paused and resumed go first.
 
-1. **Branch:** the app runs `git fetch origin main` and creates a branch named after the key (for example `RECK-123`) from `origin/main`, in its own worktree under `data/worktrees/`. Your own checkout is never touched. If that branch already exists, locally or on GitHub, the ticket stops, and the card asks for another branch name. Existing branches are never reused or overwritten.
-2. **Test setup:** `node_modules` is linked from your checkout. Only `.env` (ReviewCook) or `.env.test` (GiftLips) is copied in. `.env.staging` and `.env.production` are never used. Any database or Redis the tests need must already be running: the team never starts, stops or resets Docker or databases.
-3. **Baseline:** the app runs `npm test` once on the clean branch, outside any sandbox, and saves the tests that already fail on `main`. If the suite cannot run at all (for example the DB is down), the ticket stops before any dev work.
-4. **Plan and build:** the dev runs with the superpowers and ponytail plugins. It decides on its own, because no human answers questions. It writes `.aiteam/<KEY>/PLAN.md` and then `SUMMARY.md`, which covers backend changes, files, tests, notes for a frontend dev, and open questions. A ticket that needs no code (only feedback or steps) ends here with a "no code change" comment, and no branch is kept.
-5. **Tests, then QA:** the app runs `npm test` again. New failures, or fewer tests than on `main`, go straight back to the dev. Otherwise Quinn reviews the change against the acceptance criteria, with no network and without running the suite itself. Each ticket gets at most 2 fix cycles.
-6. **Commit and push:** on PASS the app commits `feat(KEY): …` (`fix(KEY): …` for a Bug) and runs `git push -u origin <branch>`, never with force. If the push fails (auth, rejected), the ticket ends as **DONE · push failed**. "Waiting for you" then shows the git error with **Retry push** and **I'll push myself**.
-7. **Jira comment:** the ticket card shows a plain-text comment with a **Copy comment** button and the GitHub branch link. You merge or open the PR yourself.
+1. **Branch:** the app runs `git fetch origin main` and creates a branch named after the key (for example `RECK-123`) from `origin/main`, in its own worktree under `data/worktrees/`. Your own checkout is never touched. If that branch already exists, the ticket stops, and the card asks for another branch name.
+2. **Test setup:** `node_modules` is linked from your checkout. Only `.env` (ReviewCook) or `.env.test` (GiftLips) is copied in. `.env.staging` and `.env.production` are never used. Any database or Redis the tests need must already be running.
+3. **Baseline:** the app runs `npm test` once on the clean branch and saves the tests that already fail on `main`. If the suite cannot run, the ticket stops before any dev work.
+4. **Plan and build:** the dev brainstorms and plans (superpowers), then builds or fixes with the smallest change (ponytail). It decides on its own, because no human answers questions, and writes `.aiteam/<KEY>/PLAN.md` and `SUMMARY.md`. A ticket that needs no code ends with a "no code change" comment.
+5. **Tests, then QA:** the app runs `npm test` again. New failures, or fewer tests than on `main`, go back to the dev. Otherwise Quinn reviews the change against the acceptance criteria, with no network. Each ticket gets at most 2 fix cycles.
+6. **Commit and push (git only):** the app uses only `git fetch`, `branch`, `commit`, `push` and `pull`. It never uses `gh` or the GitHub API, and never reads your GitHub credentials. On PASS it commits `feat(KEY): …` (`fix(KEY): …` for a Bug) and runs `git push -u origin <branch>`, never with force.
+7. **Jira comment and PR link:** the card shows a plain-text comment with **Copy comment**, the branch link, and **🔀 Create PR (draft)**. That is the link GitHub prints on push, or the compare page. Click it, choose **Create draft pull request** against `main`, and merge it yourself. If the push fails, choose **Retry push** or **I'll push myself**.
 
-Every ticket is also recorded in `data/be-tickets.json`: the ticket text, branch, test baseline, every dev and QA attempt, the plan, the summary and the final comment. Each dev sees a short list of the last 10 finished tickets in its repo. In the office, the team sits on the sofa in the **BE ticket lounge** with laptops, and gets the same animations and sounds as everyone else.
+**Agent controls:** click one squad member, in the room or the team list.
 
-`bash app/be-smoke.sh` checks ticket intake against throwaway repos without running any agent.
+- **☕ Break** (any member): finishes the current step, then rests. Captain Plan on a break means nobody gets a new ticket.
+- **⏹ Stop now** (Rocco, Gigi, Quinn): the ticket goes to BLOCKED, and its work so far is kept. The dev then takes the next to-do ticket.
+- **✏️ Change task** (devs): Stop now plus your note. **Retry** on the blocked ticket continues from the saved work and follows the note.
+- **↪ Give this ticket** (devs): pick a to-do ticket for that dev's repo. The current ticket goes to BLOCKED, and the chosen one is next.
+
+When a squad decision waits for you, Captain Plan holds up "⚑ N need you!" in the room. Sounds: a hand-off tap when Captain Plan dispatches, a ding when a branch is pushed, and the usual start, done, blocked and reminder sounds. Every ticket is recorded in `data/be-tickets.json`. `bash app/be-smoke.sh` checks intake, the queue and the controls against throwaway repos without running any agent.
 
 ## Logs, tokens and approvals
 
