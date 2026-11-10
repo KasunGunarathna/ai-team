@@ -129,6 +129,30 @@ Open the **Jira tickets** tab, choose the existing repo folder, enter the Jira k
 
 `.aiteam/` is added to the repo's `.git/info/exclude`, so AI planning files never appear in your commits or PR. Several tickets can share one repo: before each task the app switches to that ticket's branch, as long as there are no uncommitted changes. Push the branch and open the PR yourself.
 
+## BE ticket team (ReviewCook and GiftLips APIs)
+
+A separate backend team works only on Jira tickets for two repos. It never takes agents from the project team, and the project team never takes theirs. Both teams can work at the same time.
+
+| Agent | Role | Engine | Repo |
+|---|---|---|---|
+| Rocco | ReviewCook dev | Claude | `~/Development/QRTiger/ReviewCook/reviewcook-api` (keys `RECK-…`) |
+| Gigi | GiftLips dev | Claude | `~/Development/QRTiger/GiftLips/giftlips-api` (keys `GIF-…`) |
+| Quinn | Ticket QA, both repos | Codex | |
+
+Open the **BE tickets** tab, type the Jira key, and paste the ticket (summary, type, description, acceptance criteria). The key picks the repo; any other prefix is rejected. Work starts as soon as that repo's dev is free. There is no PM/BA step and no plan approval.
+
+1. **Branch:** the app runs `git fetch origin main` and creates a branch named after the key (for example `RECK-123`) from `origin/main`, in its own worktree under `data/worktrees/`. Your own checkout is never touched. If that branch already exists, locally or on GitHub, the ticket stops, and the card asks for another branch name. Existing branches are never reused or overwritten.
+2. **Test setup:** `node_modules` is linked from your checkout. Only `.env` (ReviewCook) or `.env.test` (GiftLips) is copied in. `.env.staging` and `.env.production` are never used. Any database or Redis the tests need must already be running: the team never starts, stops or resets Docker or databases.
+3. **Baseline:** the app runs `npm test` once on the clean branch, outside any sandbox, and saves the tests that already fail on `main`. If the suite cannot run at all (for example the DB is down), the ticket stops before any dev work.
+4. **Plan and build:** the dev runs with the superpowers and ponytail plugins. It decides on its own, because no human answers questions. It writes `.aiteam/<KEY>/PLAN.md` and then `SUMMARY.md`, which covers backend changes, files, tests, notes for a frontend dev, and open questions. A ticket that needs no code (only feedback or steps) ends here with a "no code change" comment, and no branch is kept.
+5. **Tests, then QA:** the app runs `npm test` again. New failures, or fewer tests than on `main`, go straight back to the dev. Otherwise Quinn reviews the change against the acceptance criteria, with no network and without running the suite itself. Each ticket gets at most 2 fix cycles.
+6. **Commit and push:** on PASS the app commits `feat(KEY): …` (`fix(KEY): …` for a Bug) and runs `git push -u origin <branch>`, never with force. If the push fails (auth, rejected), the ticket ends as **DONE · push failed**. "Waiting for you" then shows the git error with **Retry push** and **I'll push myself**.
+7. **Jira comment:** the ticket card shows a plain-text comment with a **Copy comment** button and the GitHub branch link. You merge or open the PR yourself.
+
+Every ticket is also recorded in `data/be-tickets.json`: the ticket text, branch, test baseline, every dev and QA attempt, the plan, the summary and the final comment. Each dev sees a short list of the last 10 finished tickets in its repo. In the office, the team sits on the sofa in the **BE ticket lounge** with laptops, and gets the same animations and sounds as everyone else.
+
+`bash app/be-smoke.sh` checks ticket intake against throwaway repos without running any agent.
+
 ## Logs, tokens and approvals
 
 - **Live logs:** every agent run is listed on its task card, and PM/BA runs are listed under PM/BA runs. Click a run to see its log, which updates while the agent works: assistant text, `→` tool calls and commands, `←`/`✗` results, and the QA report.
