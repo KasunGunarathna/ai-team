@@ -937,7 +937,7 @@ async function runBeTicket(p, t, job) {
     const changed = [git(wt, 'diff', '--name-only', t.baseSha), git(wt, 'ls-files', '--others', '--exclude-standard'), ...ignoredNew].join('\n').split('\n').filter(Boolean);
     const testSetup = [...new Set(changed.filter(isTestHarness))];
     // npm/yarn config runs before any test with full rights: never run QA on a change that adds or edits it.
-    const pkgCfg = testSetup.filter((f) => /(^|\/)\.(npmrc|yarnrc[^/]*)$/.test(f));
+    const pkgCfg = testSetup.filter((f) => /(^|\/)\.(npmrc|yarnrc[^/]*)$/i.test(f));
     if (pkgCfg.length) return block(p, t, `The change adds or edits package-manager config (${pkgCfg.slice(0, 5).join(', ')}). Review it in ${wt} before retrying.`);
     // File names come from the agent's workspace: pass only plain names, capped, as data.
     const safeNames = testSetup.filter((f) => /^[A-Za-z0-9._/-]{1,200}$/.test(f)).slice(0, 20);
