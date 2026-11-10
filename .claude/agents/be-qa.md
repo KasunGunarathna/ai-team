@@ -18,3 +18,5 @@ Return structured result:
 Do not change task state yourself; parent orchestrator must handle handoff.
 
 Test results: the prompt says how many tests fail in the app's run, and that all of them already fail on clean main (new failures never reach you; they go back to the developer). Do not count those against the change. Judge the diff against the acceptance criteria, negative paths, authorization and regressions you can see in the code. Do not edit repository files, commit, or touch Docker, databases or `.env*` files.
+
+Test-plan review: before the build, the prompt may ask you to review Captain Plan's `.aiteam/<KEY>/PLAN.md` test plan. Then the only file you may write is `.aiteam/<KEY>/TEST-REVIEW.md` (agreed tests, tests to add, how you will judge). Do not run the suite for this.

@@ -87,7 +87,7 @@ state.contextWindows ??= {}; // model -> context window size learned from earlie
 state.limits ??= {};
 state.authFail ??= {};
 if (state.pausedUntil) { state.limits = { claude: state.pausedUntil, codex: state.pausedUntil }; delete state.pausedUntil; }
-const engineOf = (role) => (role === 'squad-pm' ? 'none' : ['qa', 'ui-ux', 'be-qa'].includes(role) ? 'codex' : 'claude'); // Captain Plan is the app, no model
+const engineOf = (role) => (['qa', 'ui-ux', 'be-qa'].includes(role) ? 'codex' : 'claude');
 const ENGINE_NAME = { claude: 'Claude', codex: 'Codex' };
 const engineHold = (engine) => state.authFail[engine] ? `${ENGINE_NAME[engine]} login/subscription problem`
   : state.limits[engine] > Date.now() ? `Waiting for the ${ENGINE_NAME[engine]} usage limit to reset (${new Date(state.limits[engine]).toLocaleTimeString()})` : null;
@@ -375,7 +375,8 @@ function applyAnswer(p, d, value, note) {
 // mode: 'continue' keeps the task's worktree, 'restart' throws it away (user chose it explicitly; only this task's work).
 function retryTask(p, t, mode, note) {
   say(`↻ [${p.name}] ${t.id} set to retry (${mode === 'restart' ? "discarding this task's work" : 'keeping its work'})`);
-  if (mode === 'restart' && p.kind === 'be-ticket') { removeBeWorktree(p, t); Object.assign(t, { baseline: null, outcome: null, comment: null, branchUrl: null }); } // never deletes a branch with commits
+  if (p.kind === 'be-ticket') t.plannedCycle = null; // a retry re-plans with your note
+  if (mode === 'restart' && p.kind === 'be-ticket') { removeBeWorktree(p, t); Object.assign(t, { baseline: null, outcome: null, comment: null, branchUrl: null, prUrl: null, testReviewed: false, testReview: null, lastFailure: null }); } // never deletes a branch with commits
   else if (mode === 'restart') removeWorktree(p, t);
   p.decisions = p.decisions.filter((d) => !(['blocked', 'push'].includes(d.kind) && d.taskId === t.id && !d.answer));
   Object.assign(t, { status: 'READY', cycles: 0, note: null, skipDev: false, feedback: null, instructions: note || t.instructions || null }); // a Change-task note survives an empty retry note
@@ -871,16 +872,67 @@ async function runBeTicket(p, t, job) {
   let handoffs = 0;
   for (let cycle = t.cycles || 0; cycle <= MAX_FIX_CYCLES; cycle++) {
     t.cycles = cycle; t.note = null;
-    if (!t.skipDev) {
-      const hold = holdFor(t.owner);
+    if (!t.skipDev && t.plannedCycle !== cycle) {
+      // 1. Captain Plan (PM) brainstorms and plans; on a fix cycle he re-plans from the failure report.
+      const hold = holdFor('squad-pm');
       if (hold) return park('DEV', hold);
-      t.status = 'IN_PROGRESS'; save();
-      const devPrompt = `Jira ticket ${t.id} for ${p.repo}:\n\n${p.idea}\n\n` +
-        'No human is in the loop: never ask, decide yourself, and write every unclear point under "Open questions / assumptions". ' +
-        `Write your plan to ${p.planDir}/PLAN.md before coding, and ${p.planDir}/SUMMARY.md when finished. Do not commit. ${NM_RULE}` +
+      t.status = 'IN_PROGRESS'; t.note = cycle ? 'Captain Plan re-plans after the failure' : 'Captain Plan is planning'; save();
+      fs.rmSync(ai('PLAN.md'), { force: true }); fs.rmSync(ai('SUMMARY.md'), { force: true });
+      const planPrompt = `Jira ticket ${t.id} for ${p.repo}:\n\n${p.idea}\n\n` +
+        'No human is in the loop: never ask; decide yourself and list every unclear point under "Open questions / assumptions". ' +
+        `Brainstorm the approach (superpowers), read the code it touches, then write ${p.planDir}/PLAN.md: goal, approach, files to change, numbered steps, and a "## Test plan" listing the exact tests to add or change and the commands to run. Keep it the smallest complete change (ponytail). Do not change any code. ` +
+        `If the ticket needs no code change (feedback, investigation, data or config steps), write ${p.planDir}/SUMMARY.md instead with "## Findings", "## Steps" and "## Open questions / assumptions", and do not write PLAN.md.` +
         `\n\nPast tickets in this repo:\n${pastTickets(p.repo) || '(none yet)'}` +
         (t.instructions ? `\n\nInstructions from the product owner for this ticket:\n${t.instructions}` : '') +
-        (feedback ? `\n\nYour previous attempt was not accepted. Fix every point:\n\n${feedback}` : '') +
+        (feedback ? `\n\nThe previous attempt failed. Revise the plan so the developer fixes every point:\n\n${feedback}` : '');
+      const unsafe0 = beUnsafe(p, t, wt, 'no agent will run there');
+      if (unsafe0) return block(p, t, unsafe0);
+      const plan = await agentRun(p, t, `${t.id}-plan-${cycle}`, 'claude', claudeArgs('squad-pm', planPrompt, [...PM_TOOLS, 'Skill', 'Bash(git log:*)', 'Bash(git diff:*)', 'Bash(ls:*)'], PLUGIN_DIRS.flatMap((d) => ['--plugin-dir', d])), job, wt, null, 'squad-pm');
+      if (job.paused) return park('DEV', 'Paused for the team tea break (planning restarts)');
+      if (!plan || job.stopped) return block(p, t, 'Stopped by you during planning.');
+      raiseDenials(p, plan.denials, `${t.id} (Captain Plan)`);
+      if (plan.limited || plan.authFail) return park('DEV', engineHold('claude') ?? 'Waiting for Claude');
+      t.plan = keepAi('PLAN.md');
+      (t.attempts ??= []).push({ at: now(), kind: 'plan', cycle, log: plan.logPath, usage: plan.usage ?? null });
+      remember(p, t);
+      if (!t.plan) {
+        t.summary = keepAi('SUMMARY.md');
+        if (!t.summary) return block(p, t, `Captain Plan wrote neither ${p.planDir}/PLAN.md nor a no-code SUMMARY.md.`);
+        if (git(wt, 'status', '--porcelain')) return block(p, t, `Captain Plan said no code is needed but files changed in ${wt}; review them.`);
+        removeBeWorktree(p, t); t.files = [];
+        return finishBe(p, t, 'no_code');
+      }
+      // 2. Detective Quinn reviews the test plan once, before the first build; the dev builds against it.
+      if (!t.testReviewed) {
+        const qHold = holdFor('be-qa');
+        if (qHold) return park('DEV', qHold);
+        t.note = 'Detective Quinn reviews the test plan'; save();
+        fs.rmSync(ai('TEST-REVIEW.md'), { force: true });
+        const reviewFile = path.join(DATA, 'logs', p.id, `${t.id}-testplan-${Date.now()}.report.md`);
+        const reviewPrompt = `${agentBody('be-qa')}\n\n---\nTest-plan review for Jira ticket ${t.id} (${p.repo}):\n\n${p.idea}\n\n` +
+          `Read ${p.planDir}/PLAN.md, especially "## Test plan", and the code it names. Write ${p.planDir}/TEST-REVIEW.md: the tests you agree with, tests to add (edge cases, negative paths, authorization, regressions), and how you will judge the result. ` +
+          'Do not run the test suite, do not change code or tests. ' + NM_RULE;
+        const rev = await codex(`${t.id}-testplan`, reviewPrompt, reviewFile);
+        if (job.paused) return park('DEV', 'Paused for the team tea break (test-plan review restarts)');
+        if (!rev || job.stopped) return block(p, t, 'Stopped by you during the test-plan review.');
+        if (rev.limited || rev.authFail) return park('DEV', engineHold('codex') ?? 'Waiting for Codex');
+        t.testReview = keepAi('TEST-REVIEW.md') ?? (fs.existsSync(reviewFile) ? clip(fs.readFileSync(reviewFile, 'utf8'), 20_000) : null);
+        t.testReviewed = true;
+        remember(p, t);
+      }
+      t.plannedCycle = cycle; t.lastFailure = feedback || null; feedback = ''; save();
+    }
+    if (!t.skipDev) {
+      // 3. The dev only implements the plan.
+      const hold = holdFor(t.owner);
+      if (hold) return park('DEV', hold);
+      t.status = 'IN_PROGRESS'; t.note = null; save();
+      const devPrompt = `Jira ticket ${t.id} for ${p.repo}:\n\n${p.idea}\n\n` +
+        `Implement ${p.planDir}/PLAN.md exactly as written by Captain Plan (the squad PM); do not re-plan or widen the scope. Write the tests from its "## Test plan" plus those agreed in ${p.planDir}/TEST-REVIEW.md (if present), and run them. ` +
+        'No human is in the loop: never ask; decide small gaps yourself and list them under "Open questions / assumptions". ' +
+        `When finished, write ${p.planDir}/SUMMARY.md. Do not commit. ${NM_RULE}` +
+        (t.instructions ? `\n\nInstructions from the product owner for this ticket:\n${t.instructions}` : '') +
+        (t.lastFailure && cycle ? `\n\nThe previous attempt failed (Captain Plan's revised plan addresses it):\n\n${clip(t.lastFailure, 6000)}` : '') +
         (t.interrupted ? '\n\nYour previous session was interrupted by a break. Continue from the current state of the workspace.' : '') +
         (t.handoff ? `\n\nYour previous session ran out of context and this is a fresh one. Do not redo finished work. Memory from that session:\n\n${t.handoff}` : '');
       t.interrupted = false; t.handoff = null;
@@ -899,15 +951,11 @@ async function runBeTicket(p, t, job) {
         t.handoff = clip(`What it said last:\n${(dev.notes ?? []).join('\n---\n')}\n\nFiles changed so far (git status):\n${git(wt, 'status', '--short') || '(none)'}`, 6000);
         cycle--; continue; // same attempt, fresh session
       }
-      t.plan = keepAi('PLAN.md'); t.summary = keepAi('SUMMARY.md');
+      t.summary = keepAi('SUMMARY.md');
       remember(p, t);
       if (!t.summary) return block(p, t, `Dev finished without writing ${p.planDir}/SUMMARY.md`);
       if (git(wt, 'rev-list', '--count', `${t.baseSha}..HEAD`) !== '0') return block(p, t, `The developer agent made commits itself; review the branch ${p.branch} in ${wt} before retrying.`);
-      if (!git(wt, 'status', '--porcelain')) { // nothing changed: feedback-only ticket, no QA/commit/push
-        removeBeWorktree(p, t);
-        t.files = [];
-        return finishBe(p, t, 'no_code');
-      }
+      if (!git(wt, 'status', '--porcelain')) return block(p, t, 'The developer changed no files although Captain Plan planned a code change. Retry with a note, or check the plan.');
     }
     t.skipDev = false;
     const qaUnsafe = beUnsafe(p, t, wt, 'QA will not run there');
@@ -989,9 +1037,9 @@ async function runBeTicketJob(p, t, job) {
 
 // Start one piece of work for this team ('main' or 'be') if an agent is free.
 // A squad dev holds one ticket at a time, even while the app (not the agent) runs that ticket's tests.
-const squadJobFor = (role) => [...jobs.values()].find((j) => j.team === 'be' && (role === 'be-qa' ? j.role === 'be-qa'
+const squadJobFor = (role) => [...jobs.values()].find((j) => j.team === 'be' && (role === 'be-qa' || role === 'squad-pm' ? j.role === role
   : state.projects.find((p) => p.id === j.projectId)?.tasks[0]?.owner === role));
-const squadBusy = (role) => role !== 'be-qa' && !!squadJobFor(role);
+const squadBusy = (role) => role !== 'be-qa' && role !== 'squad-pm' && !!squadJobFor(role);
 
 function startNext(team) {
   const mine = state.projects.filter((p) => poolOf(p) === team);
@@ -1228,7 +1276,7 @@ const server = http.createServer(async (req, res) => {
       const { role, action, note, ticketId } = await readJson(req);
       if (!['rc-dev', 'gl-dev', 'be-qa', 'squad-pm'].includes(role)) return send(res, 400, { error: 'Unknown squad agent' });
       const dev = role === 'rc-dev' || role === 'gl-dev';
-      if (!(action === 'stop' && role !== 'squad-pm') && !(dev && ['change', 'swap'].includes(action))) return send(res, 400, { error: `${NICK[role]} cannot ${action}` });
+      if (!(action === 'stop') && !(dev && ['change', 'swap'].includes(action))) return send(res, 400, { error: `${NICK[role]} cannot ${action}` });
       const job = squadJobFor(role);
       const ticketOf = (j) => state.projects.find((p) => p.id === j?.projectId)?.tasks[0];
       const stop = () => { job.stopped = true; killTree(job.child); say(`⏹ ${NICK[role]} stopped by you: ${job.label} goes to BLOCKED (work kept)`); };
