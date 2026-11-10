@@ -33,7 +33,7 @@
   .err { color:var(--bad); font-size:13px; }
   @media (max-width:900px) { .hud { grid-template-columns:1fr; } }
   .wide { grid-column:1 / -1; }
-  .usage { max-width:1240px; margin:0 auto 12px; padding:0 16px; display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+  .usage { max-width:1240px; margin:-16px auto 32px; padding:0 16px; display:grid; grid-template-columns:1fr 1fr; gap:12px; }
   .ucard { background:var(--card); border:1px solid var(--line); border-radius:14px; padding:10px 14px; }
   .ucard .top { display:flex; justify-content:space-between; align-items:baseline; gap:8px; flex-wrap:wrap; }
   .ucard b { font-size:15px; } .ucard .big { font-size:20px; font-weight:800; }
@@ -116,11 +116,6 @@
   <span class="muted" id="clockTxt"></span>
   <a class="btn" href="/board">Open task board →</a>
 </header>
-
-<section class="usage" aria-label="Weekly plan usage">
-  <div class="ucard" id="u-claude"></div>
-  <div class="ucard" id="u-codex"></div>
-</section>
 
 <div class="stage">
 <div id="agentCard" hidden role="dialog" aria-label="Agent"></div>
@@ -242,6 +237,11 @@
     <button id="saveHours">Save hours</button> <span class="err" id="hoursErr"></span>
   </section>
 </div>
+
+<section class="usage" aria-label="Weekly plan usage">
+  <div class="ucard" id="u-claude"></div>
+  <div class="ucard" id="u-codex"></div>
+</section>
 
 <script src="/sounds.js"></script>
 <script>

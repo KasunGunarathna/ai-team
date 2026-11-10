@@ -63,7 +63,7 @@ The terminal shows what the app is doing: projects added, planning, every agent 
 
 ## Weekly usage
 
-Above the office, one card per engine shows:
+At the bottom of the office page, one card per engine shows:
 
 - **% of the weekly limit left**, with a bar (green, then orange below 30%, red below 10%), when it resets, and the 5-hour window. These numbers come from Claude and Codex themselves, so they include your own use outside AI Team. Claude reports them on each AI Team run; for Codex, the app reads the newest session log in `~/.codex/sessions` (read-only). They are as fresh as the last run ("as of …").
 - **Tokens AI Team used in the last 7 days**: total processed (including cache) and output, from AI Team's own run records.
