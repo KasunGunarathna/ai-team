@@ -15,6 +15,9 @@
   h2 { font-size:13px; text-transform:uppercase; letter-spacing:.6px; color:var(--muted); margin:0 0 10px; }
   .rooms { max-width:1240px; margin:0 auto 8px; padding:0 16px; display:flex; gap:8px; }
   .rooms button { border-radius:999px; } .rooms button[aria-pressed="true"] { background:var(--accent); color:#fff; }
+  .days { display:flex; align-items:flex-end; gap:6px; height:78px; margin-top:6px; }
+  .day { flex:1; display:flex; flex-direction:column; align-items:center; justify-content:flex-end; gap:3px; font-size:10px; color:var(--muted); }
+  .day div { width:100%; max-width:26px; border-radius:4px 4px 0 0; opacity:.55; transition:height .6s; } .day.today div { opacity:1; } .day.today span { font-weight:800; color:inherit; }
   .chip { font-size:12px; padding:3px 10px; border-radius:999px; background:var(--card); border:1px solid var(--line); }
   .chip.open { color:#fff; background:var(--ok); border-color:var(--ok); } .chip.closed { color:#fff; background:#495057; border-color:#495057; }
   .chip.pause { color:#fff; background:var(--accent); border-color:var(--accent); }
@@ -701,12 +704,12 @@ function drawOutage(outages) {
 function drawUsage() {
   const fmtTok = (n) => (n >= 1e6 ? (n / 1e6).toFixed(1) + 'M' : n >= 1e3 ? Math.round(n / 1e3) + 'k' : String(n));
   const when = (ms) => new Date(ms).toLocaleString([], { weekday: 'short', hour: '2-digit', minute: '2-digit' });
-  for (const [key, name, who] of [['claude', 'Claude', 'Mira · Bolt · Pixel · Rocco · Gigi'], ['codex', 'Codex', 'Bugsy · Iris · Quinn']]) {
+  for (const [key, name, who] of [['claude', 'Claude', 'Mira · Bolt · Pixel · Captain Plan · Rocco · Gigi'], ['codex', 'Codex', 'Bugsy · Iris · Quinn']]) {
     const u = S.weekly?.[key], card = $('u-' + key);
     const left = u?.week ? Math.max(0, 100 - u.week.pct) : null;
     const color = left == null ? 'var(--muted)' : left <= 10 ? 'var(--bad)' : left <= 30 ? 'var(--warn)' : 'var(--ok)';
     const top = document.createElement('div'); top.className = 'top';
-    const title = document.createElement('b'); title.textContent = `${key === 'claude' ? '🟣' : '🟢'} ${name} · weekly`;
+    const title = document.createElement('b'); title.textContent = `${key === 'claude' ? '🟣' : '🟢'} ${name} · weekly & daily`;
     const big = document.createElement('span'); big.className = 'big'; big.style.color = color;
     big.textContent = left == null ? 'no data yet' : `${left}% left`;
     top.append(title, big);
@@ -718,7 +721,21 @@ function drawUsage() {
     const l2 = document.createElement('div'); l2.className = 'muted';
     const tk = u?.tokens;
     l2.textContent = `AI Team used ${fmtTok(tk?.total ?? 0)} tokens this week (${fmtTok(tk?.out ?? 0)} output, ${tk?.runs ?? 0} runs) · ${who}${u?.at ? ` · as of ${new Date(u.at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` : ''}`;
-    card.replaceChildren(top, bar, l1, l2);
+    // Daily usage: today's tokens plus a 7-day mini bar chart (today last, highlighted).
+    const days = u?.days ?? [];
+    const l3 = document.createElement('div'); l3.className = 'muted';
+    l3.textContent = `Today: ${fmtTok(days.at(-1) ?? 0)} tokens · last 7 days:`;
+    const chart = document.createElement('div'); chart.className = 'days'; chart.setAttribute('role', 'img');
+    chart.setAttribute('aria-label', `Tokens per day, last 7 days: ${days.map(fmtTok).join(', ') || 'none'}`);
+    const max = Math.max(1, ...days);
+    days.forEach((n, i) => {
+      const col = document.createElement('div'); col.className = 'day' + (i === days.length - 1 ? ' today' : '');
+      col.title = `${new Date(Date.now() - (days.length - 1 - i) * 86_400_000).toLocaleDateString([], { weekday: 'short' })}: ${fmtTok(n)} tokens`;
+      const b = document.createElement('div'); b.style.height = `${Math.max(n ? 6 : 2, Math.round((60 * n) / max))}px`; b.style.background = key === 'claude' ? '#7950f2' : '#2f9e44';
+      const lab = document.createElement('span'); lab.textContent = new Date(Date.now() - (days.length - 1 - i) * 86_400_000).toLocaleDateString([], { weekday: 'narrow' });
+      col.append(b, lab); chart.append(col);
+    });
+    card.replaceChildren(top, bar, l1, l2, l3, chart);
   }
 }
 

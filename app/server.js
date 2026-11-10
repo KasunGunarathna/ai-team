@@ -6,7 +6,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import os from 'node:os';
 import { spawn, execFile, execFileSync } from 'node:child_process';
-import { REF_TYPES, isImageRef, refFileName, parseFigmaUrl, TASK_ID, authFailure, codexRateLimits, tokensSince, isOpen, limitUntil, parseVerdict, nextTask, readyTasks, normaliseTasks, normaliseQuestions, secretFiles, formatClaudeEvent, formatCodexEvent, sumUsage, permissionRule, clip, poolOf, repoForKey, ticketTitle, summarySections, githubTreeUrl, parseBaseline, jestFailures, isTestHarness, commitType, jiraComment, newestVersion, prLinkFromPush, squadNext } from './lib.js';
+import { REF_TYPES, isImageRef, refFileName, parseFigmaUrl, TASK_ID, authFailure, codexRateLimits, tokensSince, isOpen, limitUntil, parseVerdict, nextTask, readyTasks, normaliseTasks, normaliseQuestions, secretFiles, formatClaudeEvent, formatCodexEvent, sumUsage, permissionRule, clip, poolOf, repoForKey, ticketTitle, summarySections, githubTreeUrl, parseBaseline, jestFailures, isTestHarness, commitType, jiraComment, newestVersion, prLinkFromPush, squadNext, tokensByDay } from './lib.js';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
 const DATA = process.env.AI_TEAM_DATA || path.join(ROOT, 'data');
@@ -1096,9 +1096,10 @@ function weeklyUsage() {
   const pickClaude = (w) => w && { pct: Math.round((w.utilization ?? 0) * 100), resetsAt: w.resetsAt ? w.resetsAt * 1000 : null };
   const tokens = tokensSince(state.projects.flatMap((p) => [...p.runs, ...p.tasks.flatMap((t) => t.runs)]), Date.now() - 7 * 86_400_000);
   const cx = codexLimits();
+  const days = tokensByDay(state.projects.flatMap((p) => [...p.runs, ...p.tasks.flatMap((t) => t.runs)]), 7);
   return {
-    claude: { week: pickClaude(cu?.sevenDay), fiveHour: pickClaude(cu?.fiveHour), at: cu?.at ?? null, tokens: tokens.claude },
-    codex: { week: cx?.week ?? null, fiveHour: cx?.fiveHour ?? null, at: cx?.at ?? null, tokens: tokens.codex },
+    claude: { week: pickClaude(cu?.sevenDay), fiveHour: pickClaude(cu?.fiveHour), at: cu?.at ?? null, tokens: tokens.claude, days: days.claude },
+    codex: { week: cx?.week ?? null, fiveHour: cx?.fiveHour ?? null, at: cx?.at ?? null, tokens: tokens.codex, days: days.codex },
   };
 }
 

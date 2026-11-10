@@ -203,6 +203,20 @@ export function tokensSince(runs, since) {
   return out;
 }
 
+// Tokens per engine for each of the last `days` local calendar days (oldest first, today last).
+export function tokensByDay(runs, days, now = Date.now()) {
+  const start = new Date(now); start.setHours(0, 0, 0, 0);
+  const day0 = start.getTime() - (days - 1) * 86_400_000;
+  const out = { claude: Array(days).fill(0), codex: Array(days).fill(0) };
+  for (const r of runs) {
+    const t = Date.parse(r.startedAt);
+    if (!out[r.engine] || !r.usage || !(t >= day0)) continue;
+    const i = Math.min(days - 1, Math.floor((t - day0) / 86_400_000)); // DST days are 23/25 h; clamp keeps today last
+    out[r.engine][i] += r.usage.input + r.usage.output + r.usage.cacheRead + r.usage.cacheWrite;
+  }
+  return out;
+}
+
 // Codex session log (JSON lines) -> its latest rate limits: { fiveHour, week } each { pct, resetsAt (ms) }.
 export function codexRateLimits(text) {
   const lines = text.split('\n');

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseVerdict, nextTask, normaliseTasks, normaliseQuestions, secretFiles, formatClaudeEvent, formatCodexEvent, sumUsage, permissionRule, repoForKey, githubTreeUrl, summarySections, parseBaseline, commitType, ticketTitle, jiraComment, poolOf, newestVersion, jestFailures, isTestHarness, prLinkFromPush, squadNext } from './lib.js';
+import { parseVerdict, nextTask, normaliseTasks, normaliseQuestions, secretFiles, formatClaudeEvent, formatCodexEvent, sumUsage, permissionRule, repoForKey, githubTreeUrl, summarySections, parseBaseline, commitType, ticketTitle, jiraComment, poolOf, newestVersion, jestFailures, isTestHarness, prLinkFromPush, squadNext, tokensByDay } from './lib.js';
 
 test('parseVerdict takes the last verdict and defaults to BLOCKED', () => {
   assert.equal(parseVerdict('blah\nVERDICT: PASS'), 'PASS');
@@ -260,4 +260,15 @@ test('squadNext: resumed tickets first, then priority, then queue order; busy ow
 test('jiraComment adds the Create PR line before Merge', () => {
   const c = jiraComment({ key: 'RECK-1', outcome: 'pushed', sections: {}, cycles: 0, baselineFailing: [], branch: 'RECK-1', branchUrl: 'https://github.com/o/r/tree/RECK-1', prUrl: 'https://github.com/o/r/pull/new/RECK-1' });
   assert.match(c, /Branch: https:\/\/github\.com\/o\/r\/tree\/RECK-1\nCreate PR: https:\/\/github\.com\/o\/r\/pull\/new\/RECK-1\nMerge: manual$/);
+});
+
+test('tokensByDay: total tokens per engine for each of the last N local days, oldest first', () => {
+  const now = new Date(2026, 10, 10, 15, 0).getTime();
+  const at = (d, h) => new Date(2026, 10, d, h).toISOString();
+  const u = (n) => ({ input: n, output: 0, cacheRead: 0, cacheWrite: 0 });
+  const runs = [{ engine: 'claude', startedAt: at(10, 9), usage: u(100) }, { engine: 'claude', startedAt: at(10, 1), usage: u(5) },
+    { engine: 'codex', startedAt: at(9, 23), usage: u(7) }, { engine: 'claude', startedAt: at(3, 12), usage: u(999) }, { engine: 'app', startedAt: at(10, 9), usage: null }];
+  const d = tokensByDay(runs, 3, now);
+  assert.deepEqual(d.claude, [0, 0, 105]);
+  assert.deepEqual(d.codex, [0, 7, 0]);
 });
