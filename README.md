@@ -62,7 +62,7 @@ The terminal shows what the app is doing: projects added, planning, every agent 
 - **Whole team:** "☕ Team tea break" stops every agent immediately. Each interrupted task keeps its work in its worktree and goes back to READY (not counted as a failure). "▶ Back to work" starts them again: a developer continues from the partial work, an interrupted QA run starts over, and interrupted planning runs again. **Stop** (on the board) stops all running agents immediately.
 - **New dependencies:** each task's worktree starts without `node_modules`, so DEV installs dependencies in it. This takes longer and uses more disk.
 
-## Weekly usage
+## Weekly and daily usage
 
 At the bottom of the office page, one card per engine shows:
 
@@ -135,29 +135,31 @@ A separate backend squad works only on Jira tickets for two repos, in its own **
 
 | Agent | Role | Engine | Repo |
 |---|---|---|---|
-| 🦸 Captain Plan | PM: hands out tickets | the app (no AI, no quota) | |
-| 🧢 Rocket Rocco | ReviewCook dev | Claude, with the superpowers and ponytail plugins | `~/Development/QRTiger/ReviewCook/reviewcook-api` (keys `RECK-…`) |
-| 🎀 Giggly Gigi | GiftLips dev | Claude, with the superpowers and ponytail plugins | `~/Development/QRTiger/GiftLips/giftlips-api` (keys `GIF-…`) |
-| 🔍 Detective Quinn | QA, both repos | Codex | |
+| 🦸 Captain Plan | PM: brainstorms and plans each ticket | Claude, with the superpowers and ponytail plugins | |
+| 🧢 Rocket Rocco | ReviewCook dev: only implements the plan | Claude, with the superpowers and ponytail plugins | `~/Development/QRTiger/ReviewCook/reviewcook-api` (keys `RECK-…`) |
+| 🎀 Giggly Gigi | GiftLips dev: only implements the plan | Claude, with the superpowers and ponytail plugins | `~/Development/QRTiger/GiftLips/giftlips-api` (keys `GIF-…`) |
+| 🔍 Detective Quinn | QA: reviews the test plan, then tests | Codex | |
 
 Open the **Squad tickets** tab on the board, type the Jira key, and paste the ticket. It joins the **to-do list**, which also shows on the board in the Squad room. Captain Plan hands tickets out in the order you added them: `RECK-` tickets go to Rocco, `GIF-` tickets to Gigi, and each dev works on one ticket at a time. Tickets that were paused and resumed go first.
 
 1. **Branch:** the app runs `git fetch origin main` and creates a branch named after the key (for example `RECK-123`) from `origin/main`, in its own worktree under `data/worktrees/`. Your own checkout is never touched. If that branch already exists, the ticket stops, and the card asks for another branch name.
 2. **Test setup:** `node_modules` is linked from your checkout. Only `.env` (ReviewCook) or `.env.test` (GiftLips) is copied in. `.env.staging` and `.env.production` are never used. Any database or Redis the tests need must already be running.
 3. **Baseline:** the app runs `npm test` once on the clean branch and saves the tests that already fail on `main`. If the suite cannot run, the ticket stops before any dev work.
-4. **Plan and build:** the dev brainstorms and plans (superpowers), then builds or fixes with the smallest change (ponytail). It decides on its own, because no human answers questions, and writes `.aiteam/<KEY>/PLAN.md` and `SUMMARY.md`. A ticket that needs no code ends with a "no code change" comment.
-5. **Tests, then QA:** the app runs `npm test` again. New failures, or fewer tests than on `main`, go back to the dev. Otherwise Quinn reviews the change against the acceptance criteria, with no network. Each ticket gets at most 2 fix cycles.
-6. **Commit and push (git only):** the app uses only `git fetch`, `branch`, `commit`, `push` and `pull`. It never uses `gh` or the GitHub API, and never reads your GitHub credentials. On PASS it commits `feat(KEY): …` (`fix(KEY): …` for a Bug) and runs `git push -u origin <branch>`, never with force.
-7. **Jira comment and PR link:** the card shows a plain-text comment with **Copy comment**, the branch link, and **🔀 Create PR (draft)**. That is the link GitHub prints on push, or the compare page. Click it, choose **Create draft pull request** against `main`, and merge it yourself. If the push fails, choose **Retry push** or **I'll push myself**.
+4. **Plan:** Captain Plan brainstorms and writes `.aiteam/<KEY>/PLAN.md`, including a test plan. He decides on his own, because no human answers questions, and lists open questions. If no code is needed, he writes the findings and steps instead, and the ticket ends with a "no code change" comment.
+5. **Test-plan review:** Detective Quinn reviews the test plan once and writes `TEST-REVIEW.md`, covering the agreed tests and any to add.
+6. **Build:** Rocco or Gigi only implements the plan and the agreed tests, then writes `SUMMARY.md`.
+7. **Tests, then QA:** the app runs `npm test` again, then Quinn reviews the change against the acceptance criteria, with no network. A bug of either kind goes back to **Captain Plan**, who revises the plan from the failure report, and the dev tries again. Each ticket gets at most 2 fix cycles.
+8. **Commit and push (git only):** the app uses only `git fetch`, `branch`, `commit`, `push` and `pull`. It never uses `gh` or the GitHub API, and never reads your GitHub credentials. On PASS it commits `feat(KEY): …` (`fix(KEY): …` for a Bug) and runs `git push -u origin <branch>`, never with force.
+9. **Jira comment and PR link:** the card shows a plain-text comment with **Copy comment**, the branch link, and **🔀 Create PR (draft)**. That is the link GitHub prints on push, or the compare page. Click it, choose **Create draft pull request** against `main`, and merge it yourself. If the push fails, choose **Retry push** or **I'll push myself**.
 
 **Agent controls:** click one squad member, in the room or the team list.
 
 - **☕ Break** (any member): finishes the current step, then rests. Captain Plan on a break means nobody gets a new ticket.
-- **⏹ Stop now** (Rocco, Gigi, Quinn): the ticket goes to BLOCKED, and its work so far is kept. The dev then takes the next to-do ticket.
+- **⏹ Stop now** (any member): the ticket goes to BLOCKED, and its work so far is kept. The dev then takes the next to-do ticket.
 - **✏️ Change task** (devs): Stop now plus your note. **Retry** on the blocked ticket continues from the saved work and follows the note.
 - **↪ Give this ticket** (devs): pick a to-do ticket for that dev's repo. The current ticket goes to BLOCKED, and the chosen one is next.
 
-When a squad decision waits for you, Captain Plan holds up "⚑ N need you!" in the room. Sounds: a hand-off tap when Captain Plan dispatches, a ding when a branch is pushed, and the usual start, done, blocked and reminder sounds. Every ticket is recorded in `data/be-tickets.json`. `bash app/be-smoke.sh` checks intake, the queue and the controls against throwaway repos without running any agent.
+The Squad room has its own vibe: a neon sign, string lights, an arcade machine, a lava lamp, a fish tank and a live window. The main office has a wandering cat, a swaying plant and drifting clouds. When a squad decision waits for you, Captain Plan holds up "⚑ N need you!" in the room. Sounds: a hand-off tap when Captain Plan dispatches, a ding when a branch is pushed, and the usual start, done, blocked and reminder sounds. Every ticket is recorded in `data/be-tickets.json`. `bash app/be-smoke.sh` checks intake, the queue and the controls against throwaway repos without running any agent.
 
 ## Logs, tokens and approvals
 

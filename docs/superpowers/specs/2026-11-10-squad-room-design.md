@@ -58,3 +58,14 @@ The BE ticket team already works on its own (Rocco, Gigi, Quinn). The product ow
 ## Open questions
 
 - None blocking. The names, the non-AI Captain Plan, and FIFO dispatch are my calls and can be changed.
+
+## Revision 2026-11-10 (product owner)
+
+- **Captain Plan becomes a real Claude agent** (role `squad-pm`, with the superpowers and ponytail plugins). Dispatch stays with the app, in the same queue order. For each ticket he brainstorms and writes `PLAN.md` with a test plan, or, for a no-code ticket, `SUMMARY.md` with findings and steps.
+- **Detective Quinn** reviews the test plan once (`TEST-REVIEW.md`) before the build. After that he only tests.
+- **Devs** only implement `PLAN.md` and the agreed tests. They no longer plan.
+- **On any bug** (new test failures, or a QA FAIL), the ticket goes back to Captain Plan, who re-plans from the failure report, and then to the dev. At most 2 fix cycles. A Retry also re-plans, using your note.
+- **Captain Plan** has Break and Stop now in his panel.
+- **Squad room redesign:** a different vibe from the main office. It has a night-purple wall, a neon sign, twinkling string lights, a live window, a clock, an arcade, a lava lamp, a fish tank, snacks, a beanbag and plants.
+- **More animations:** in the Squad room, plus the main office's wandering cat, swaying plant and drifting clouds. All of them are disabled under reduced-motion.
+- **Daily usage:** the usage cards show today's tokens and a 7-day bar chart for each engine.
