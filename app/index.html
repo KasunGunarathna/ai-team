@@ -39,6 +39,8 @@
   .decision label { display:flex; align-items:flex-start; margin:4px 0; cursor:pointer; }
   .decision textarea { min-height:60px; margin-top:6px; }
   .detail { white-space:pre-wrap; font-size:12px; max-height:180px; overflow:auto; background:var(--card); border:1px solid var(--line); border-radius:6px; padding:8px; margin:6px 0; }
+  .refs { display:flex; flex-wrap:wrap; gap:8px; margin:6px 0; } .ref { font-size:12px; max-width:140px; word-break:break-all; }
+  .ref img { display:block; max-width:130px; max-height:84px; border-radius:6px; border:1px solid var(--line); }
   .runs { font-size:12px; margin-top:4px; } .runs div { margin:2px 0; }
   .tokens { font-size:12px; color:var(--muted); font-variant-numeric:tabular-nums; }
   pre { white-space:pre-wrap; word-break:break-word; background:var(--card); border:1px solid var(--line); border-radius:8px; padding:12px; max-height:60vh; overflow:auto; font-size:12px; }
@@ -156,6 +158,42 @@ const logPanel = (r) => el('div', {},
   el('p', { className: 'tokens', id: 'logMeta' }),
   el('pre', { id: 'log', textContent: 'Loading…' }));
 
+// ---------- design references for Iris (UI/UX): images, HTML files, Figma links ----------
+const openRefs = new Set(), refInputs = new Map();
+const refUrl = (p, scope, name) => `/refs?project=${encodeURIComponent(p.id)}&scope=${encodeURIComponent(scope)}&name=${encodeURIComponent(name)}`;
+const asBase64 = (file) => new Promise((ok, bad) => { const r = new FileReader(); r.onload = () => ok(String(r.result).split(',')[1]); r.onerror = bad; r.readAsDataURL(file); });
+function refsPanel(p, scope, label) {
+  const refs = scope === 'project' ? p.refs?.project : p.refs?.tasks?.[scope];
+  if (!refs) return null;
+  const key = p.id + ':' + scope;
+  if (!refInputs.has(key)) refInputs.set(key, el('input', { placeholder: 'Figma frame link (https://www.figma.com/design/…?node-id=…)', style: 'margin:0' }));
+  const linkIn = refInputs.get(key);
+  const say = (r) => { actError = r?.message || ''; refresh(); };
+  const fail = (e) => { actError = e.message; render(); };
+  const upload = el('input', { type: 'file', multiple: true, accept: 'image/png,image/jpeg,image/gif,image/webp,.html,.htm', style: 'margin:6px 0', onchange: async (e) => {
+    for (const f of e.target.files) {
+      if (f.size > 10 * 1024 * 1024) { fail(new Error(`${f.name} is larger than 10 MB`)); continue; }
+      await api(`/api/projects/${p.id}/refs`, { scope, name: f.name, data: await asBase64(f) }).then(say).catch(fail);
+    }
+    e.target.value = '';
+  } });
+  const remove = (body) => api(`/api/projects/${p.id}/refs/remove`, { scope, ...body }).then(say).catch(fail);
+  return el('details', { open: openRefs.has(key), ontoggle: (e) => (e.target.open ? openRefs.add(key) : openRefs.delete(key)) },
+    el('summary', { className: scope === 'project' ? '' : 'muted', textContent: `🎨 ${label} (${refs.files.length + refs.links.length})` }),
+    el('p', { className: 'muted', style: 'margin:4px 0', textContent: 'Iris (UI/UX) follows these when designing: images (PNG, JPG, GIF, WebP), HTML pages, and Figma frame links. Max 10 MB per file.' }),
+    el('div', { className: 'refs' },
+      ...refs.files.map((f) => el('div', { className: 'ref' },
+        /\.(png|jpe?g|gif|webp)$/i.test(f) ? el('img', { src: refUrl(p, scope, f), alt: f, loading: 'lazy' }) : null,
+        el('a', { href: refUrl(p, scope, f), target: '_blank', rel: 'noopener', textContent: f }), ' ',
+        el('a', { textContent: '✕', title: 'Remove', onclick: () => remove({ name: f }) }))),
+      ...refs.links.map((l) => el('div', { className: 'ref' },
+        el('a', { href: l, target: '_blank', rel: 'noopener noreferrer', textContent: '🔗 Figma: ' + l.replace(/^https:\/\/(www\.)?figma\.com\//, '').slice(0, 40) }), ' ',
+        el('a', { textContent: '✕', title: 'Remove', onclick: () => remove({ link: l }) })))),
+    upload,
+    el('div', { className: 'row', style: 'flex-wrap:nowrap' }, linkIn,
+      el('button', { className: 'ghost', textContent: 'Add link', onclick: () => api(`/api/projects/${p.id}/refs/link`, { scope, url: linkIn.value }).then((r) => { linkIn.value = ''; say(r); }).catch(fail) })));
+}
+
 function editForm(p) {
   return keep('edit' + p.id, () => {
     const name = el('input', { value: p.name }), idea = el('textarea', { value: p.idea, style: 'min-height:200px' });
@@ -231,6 +269,7 @@ function render() {
     el('p', { className: 'tokens', style: 'margin:0', textContent: `Tokens used: ${usageText(p.usage)}${p.usage.costUsd ? ' (Claude API-equivalent estimate; your subscription is not billed per token)' : ''}` }),
     p.allowTools.length ? el('p', { className: 'muted', style: 'margin:4px 0', textContent: 'Extra allowed tools: ' + p.allowTools.join(', ') }) : null,
     el('details', {}, el('summary', { textContent: kindOf(p) === 'ticket' ? 'Ticket details' : 'Idea' }), el('p', { textContent: p.idea, style: 'white-space:pre-wrap' })),
+    refsPanel(p, 'project', 'Design references for all screens'),
     el('div', { className: 'row', style: 'align-items:flex-start;margin-top:8px' }, editForm(p), replanForm(p),
       el('button', { className: 'ghost', textContent: kindOf(p) === 'ticket' ? 'Remove ticket' : 'Remove project', onclick: () => { if (confirm(`Remove "${p.name}" from AI Team? Its logs are deleted. Files and git history in ${p.path} are not touched.`)) act(`/api/projects/${p.id}/remove`); } })),
     el('div', { className: 'row', style: 'margin-top:12px' },
@@ -254,6 +293,7 @@ function render() {
         el('div', { className: 'task ' + t.status },
           el('div', {}, el('b', { textContent: t.id }), ' ', el('span', { className: 'pill', textContent: `P${t.phase} · ${t.owner}` })),
           el('div', { textContent: t.title }),
+          t.owner === 'frontend-dev' ? refsPanel(p, t.id, 'Design refs') : null,
           t.design ? el('a', { href: `/design?project=${encodeURIComponent(p.id)}&task=${encodeURIComponent(t.id)}`, target: '_blank', rel: 'noopener', style: 'font-size:12px', textContent: `🎨 UI mockup (${t.design.status === 'approved' ? 'approved' : 'waiting for you'})` }) : null,
           t.cycles ? el('div', { className: 'muted', textContent: `fix cycle ${t.cycles}/2` }) : null,
           t.dependsOn.length ? el('div', { className: 'muted', textContent: 'needs ' + t.dependsOn.join(', ') }) : null,

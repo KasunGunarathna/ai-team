@@ -109,6 +109,14 @@ Iris, the UI/UX agent (runs on Codex, `.claude/agents/ui-ux.md`), designs every 
 2. **Your review:** a "🎨 design" decision appears in "Waiting for you" (board and office) with **🎨 Open UI mockup**. Choose **Approve**, or **Request changes** and write what to change; Iris then makes a new round with your note.
 3. **Build:** after approval, Pixel builds the real UI to match the mockup, and Bugsy (QA) also checks the UI against it.
 
+**Design references (inputs for Iris):** on the board, open **🎨 Design references for all screens** under a project (used for every frontend task) or **🎨 Design refs** on a frontend task card (that task only), and add:
+
+- **Images** (PNG, JPG, GIF, WebP; max 10 MB): attached to Iris's Codex prompt as images (`codex exec -i`).
+- **HTML pages**: Iris reads them as reference (their scripts are not used).
+- **Figma links**: paste a link to a frame (it contains `node-id=`). If `FIGMA_TOKEN` is set when you start the app (a Figma personal access token with read access), the app downloads that frame as a PNG and attaches it. Without a token the link is only listed, because Codex cannot open Figma from its sandbox; export the frame as PNG and upload it instead.
+
+Add or change references before the design runs, or add them and choose **Request changes** to get a new round that uses them. Files are stored in `data/refs/` and shown sandboxed.
+
 Backend tasks skip this step. Mockups are kept in `data/designs/` and (for projects) committed with the task. They are shown in a locked-down sandbox: no scripts, no outside requests, and no access to the app.
 
 ## Jira tickets on an existing project

@@ -141,3 +141,25 @@ test('codexRateLimits reads the latest 5-hour and weekly windows', async () => {
   assert.deepEqual(codexRateLimits([line(1, 10), '{"bad', line(2, 20), '{"type":"other"}'].join('\n')), { fiveHour: { pct: 2, resetsAt: 100000 }, week: { pct: 20, resetsAt: 200000 } });
   assert.equal(codexRateLimits('nothing here'), null);
 });
+
+test('refFileName keeps safe image/html names only', async () => {
+  const { refFileName, isImageRef } = await import('./lib.js');
+  assert.equal(refFileName('Home screen (v2).PNG'), 'Home_screen__v2_.PNG');
+  assert.equal(refFileName('../../etc/passwd.html'), 'passwd.html');
+  assert.equal(refFileName('.hidden.png'), 'hidden.png');
+  assert.equal(refFileName('script.js'), null);
+  assert.equal(refFileName('logo.svg'), null);
+  assert.equal(refFileName('.png'), null);
+  assert.equal(isImageRef('a.webp'), true);
+  assert.equal(isImageRef('a.html'), false);
+});
+
+test('parseFigmaUrl accepts figma file/frame links only', async () => {
+  const { parseFigmaUrl } = await import('./lib.js');
+  assert.deepEqual(parseFigmaUrl('https://www.figma.com/design/AbCdEf1234567890/Salon?node-id=12-345&t=x'), { key: 'AbCdEf1234567890', nodeId: '12:345', url: 'https://www.figma.com/design/AbCdEf1234567890/Salon?node-id=12-345&t=x' });
+  assert.equal(parseFigmaUrl('https://www.figma.com/file/AbCdEf1234567890/X').nodeId, null);
+  assert.equal(parseFigmaUrl('http://www.figma.com/design/AbCdEf1234567890/X'), null);
+  assert.equal(parseFigmaUrl('https://evil.com/design/AbCdEf1234567890/X'), null);
+  assert.equal(parseFigmaUrl('https://figma.com.evil.com/design/AbCdEf1234567890/X'), null);
+  assert.equal(parseFigmaUrl('not a url'), null);
+});

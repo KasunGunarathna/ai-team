@@ -215,3 +215,25 @@ export function codexRateLimits(text) {
   }
   return null;
 }
+
+// ---------- design references (inputs for the UI/UX agent) ----------
+export const REF_TYPES = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp', html: 'text/html; charset=utf-8', htm: 'text/html; charset=utf-8' };
+export const isImageRef = (name) => /\.(png|jpe?g|gif|webp)$/i.test(name);
+
+// Uploaded file name -> safe stored name (no folders, plain characters, allowed type), or null.
+export function refFileName(name) {
+  const base = String(name ?? '').split(/[\\/]/).pop().replace(/[^\w.-]/g, '_').replace(/^[._-]+/, '').slice(-80);
+  const ext = base.includes('.') ? base.split('.').pop().toLowerCase() : '';
+  return REF_TYPES[ext] && base.length > ext.length + 1 ? base : null;
+}
+
+// Figma link -> { key, nodeId, url } (nodeId "12:34" when the link points at a frame), or null if not a Figma file link.
+export function parseFigmaUrl(raw) {
+  let u;
+  try { u = new URL(String(raw).trim()); } catch { return null; }
+  if (u.protocol !== 'https:' || !/(^|\.)figma\.com$/i.test(u.hostname)) return null;
+  const m = u.pathname.match(/^\/(?:design|file|proto|board)\/([A-Za-z0-9]{10,64})(?:\/|$)/);
+  if (!m) return null;
+  const node = u.searchParams.get('node-id');
+  return { key: m[1], nodeId: node && /^\d+[-:]\d+$/.test(node) ? node.replace('-', ':') : null, url: u.toString() };
+}

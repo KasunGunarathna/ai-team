@@ -6,7 +6,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import os from 'node:os';
 import { spawn, execFile, execFileSync } from 'node:child_process';
-import { TASK_ID, authFailure, codexRateLimits, tokensSince, isOpen, limitUntil, parseVerdict, nextTask, readyTasks, normaliseTasks, normaliseQuestions, secretFiles, formatClaudeEvent, formatCodexEvent, sumUsage, permissionRule, clip } from './lib.js';
+import { REF_TYPES, isImageRef, refFileName, parseFigmaUrl, TASK_ID, authFailure, codexRateLimits, tokensSince, isOpen, limitUntil, parseVerdict, nextTask, readyTasks, normaliseTasks, normaliseQuestions, secretFiles, formatClaudeEvent, formatCodexEvent, sumUsage, permissionRule, clip } from './lib.js';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
 const DATA = process.env.AI_TEAM_DATA || path.join(ROOT, 'data');
@@ -26,6 +26,35 @@ const DESIGNS = path.join(DATA, 'designs'); // proposed/approved mockups, kept o
 // Frontend tasks need an approved UI design (by Iris, the UI/UX agent) before the developer starts.
 const needsDesign = (t) => t.owner === 'frontend-dev' && t.design?.status !== 'approved';
 const designRel = (p, t) => path.join(p.planDir, 'design', t.id);
+
+// Design references (images, HTML, Figma links) for the UI/UX agent, per project ("project") or per frontend task (its id).
+const REFS = path.join(DATA, 'refs');
+const MAX_REF_BYTES = 10 * 1024 * 1024, MAX_REFS = 20;
+const refScopeOk = (p, scope) => scope === 'project' || (TASK_ID.test(scope ?? '') && p.tasks.some((t) => t.id === scope));
+const refDir = (p, scope) => path.join(REFS, p.id, scope === 'project' ? '_project' : scope);
+const refLinks = (p, scope) => (scope === 'project' ? (p.designLinks ??= []) : (p.tasks.find((t) => t.id === scope).designLinks ??= []));
+function listRefs(p, scope) {
+  const dir = refDir(p, scope);
+  return { files: fs.existsSync(dir) ? fs.readdirSync(dir).filter((f) => refFileName(f) === f).sort() : [], links: [...refLinks(p, scope)] };
+}
+
+// Figma frame -> PNG via the Figma API, only when FIGMA_TOKEN is set (the token is never stored).
+async function importFigma(p, scope, fig) {
+  const token = process.env.FIGMA_TOKEN;
+  if (!token) return 'Link saved. To also give Iris the frame as an image, set FIGMA_TOKEN and add the link again, or export a PNG from Figma and upload it.';
+  if (!fig.nodeId) return 'Link saved. To import it as an image, copy a link to a specific frame (it contains node-id=).';
+  const api = await fetch(`https://api.figma.com/v1/images/${fig.key}?ids=${encodeURIComponent(fig.nodeId)}&format=png&scale=2`, { headers: { 'X-Figma-Token': token }, signal: AbortSignal.timeout(20_000) });
+  if (!api.ok) return `Link saved, but Figma answered HTTP ${api.status} (check FIGMA_TOKEN and access to the file).`;
+  const imgUrl = (await api.json()).images?.[fig.nodeId];
+  if (typeof imgUrl !== 'string' || !imgUrl.startsWith('https://')) return 'Link saved, but Figma returned no image for that frame.';
+  const img = await fetch(imgUrl, { signal: AbortSignal.timeout(30_000) });
+  const buf = Buffer.from(await img.arrayBuffer());
+  if (!img.ok || buf.length > MAX_REF_BYTES) return 'Link saved, but the frame image could not be downloaded (or is larger than 10 MB).';
+  const dir = refDir(p, scope);
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, `figma-${fig.key.slice(0, 12)}-${fig.nodeId.replace(':', '-')}.png`), buf);
+  return 'Link saved and the Figma frame imported as an image.';
+}
 
 const PM_TOOLS = ['Read', 'Write', 'Edit', 'Glob', 'Grep'];
 const DEV_TOOLS = [
@@ -556,14 +585,25 @@ async function designStep(p, t, job, wt, park, holdFor) {
   t.status = 'DESIGN'; t.note = null; save();
   const rel = designRel(p, t), round = (t.design?.rounds ?? 0) + 1;
   fs.mkdirSync(path.join(wt, rel), { recursive: true });
+  const refs = ['project', t.id].map((scope) => ({ scope, ...listRefs(p, scope) }));
+  const images = refs.flatMap((r) => r.files.filter(isImageRef).map((f) => path.join(refDir(p, r.scope), f)));
+  const htmls = refs.flatMap((r) => r.files.filter((f) => !isImageRef(f)).map((f) => path.join(refDir(p, r.scope), f)));
+  const links = refs.flatMap((r) => r.links);
+  const refsText = images.length || htmls.length || links.length
+    ? '\n\nDesign references from the product owner (follow them closely; they win over your own taste):' +
+      (images.length ? `\n- Images attached to this message: ${images.map((f) => path.basename(f)).join(', ')}` : '') +
+      (htmls.length ? `\n- HTML references to read (do not copy their scripts): ${htmls.join(', ')}` : '') +
+      (links.length ? `\n- Figma links (you cannot open them; frames imported as images are attached above): ${links.join(', ')}` : '')
+    : '';
   const prompt = `${agentBody('ui-ux')}\n\n---\nTask: ${p.taskDir}/${t.id}.md (${t.title}). Product context: ${p.kind === 'ticket' ? `${p.planDir}/ANALYSIS.md` : 'docs/PRD.md and docs/ARCHITECTURE.md'} if present.\n` +
     `Write ${rel}/mockup.html: ONE self-contained static HTML file (inline CSS only; no JavaScript; no external fonts, images, scripts or links) showing the screens and states for this task (main layout, form fields and buttons, empty, loading, error and success states, and a narrow mobile view), with realistic sample content and a caption per state.\n` +
     `Write ${rel}/NOTES.md: layout and component choices, accessibility (labels, contrast, focus, keyboard order), states, and open UX questions.\n` +
     'Do not change application code, tests or configuration.' +
+    refsText +
     productDecisions(p) +
     (t.designFeedback ? `\n\nThe product owner reviewed your previous proposal and asked for these changes (apply them):\n${t.designFeedback}` : '');
   const reportFile = path.join(DATA, 'logs', p.id, `${t.id}-design-${round}-${Date.now()}.report.md`);
-  const r = await agentRun(p, t, `${t.id}-design-${round}`, 'codex', ['exec', '--json', '--ignore-rules', '-C', wt, '-s', 'workspace-write', '-o', reportFile, prompt], job, wt, null, 'ui-ux');
+  const r = await agentRun(p, t, `${t.id}-design-${round}`, 'codex', ['exec', '--json', '--ignore-rules', ...images.flatMap((f) => ['-i', f]), '-C', wt, '-s', 'workspace-write', '-o', reportFile, prompt], job, wt, null, 'ui-ux');
   if (job.paused) return park('DEV', 'Paused for the team tea break (design restarts)');
   if (!r || job.stopped) return block(p, t, 'Stopped by you during UI design.');
   if (r.limited || r.authFail) return park('DEV', engineHold('codex') ?? 'Waiting for Codex');
@@ -646,9 +686,9 @@ setInterval(() => {
 const send = (res, code, body, type = 'application/json') =>
   res.writeHead(code, { 'Content-Type': type }).end(type === 'application/json' ? JSON.stringify(body) : body);
 
-async function readJson(req) {
+async function readJson(req, max = 100_000) {
   let s = '';
-  for await (const c of req) { s += c; if (s.length > 100_000) throw new Error('body too large'); }
+  for await (const c of req) { s += c; if (s.length > max) throw new Error('body too large'); }
   return s ? JSON.parse(s) : {};
 }
 
@@ -692,7 +732,8 @@ function weeklyUsage() {
 
 function view(p) {
   const tasks = p.tasks.map((t) => ({ ...t, usage: sumUsage(t.runs.map((r) => r.usage)) }));
-  return { ...p, tasks, usage: sumUsage([...p.runs, ...p.tasks.flatMap((t) => t.runs)].map((r) => r.usage)) };
+  const refs = { project: listRefs(p, 'project'), tasks: Object.fromEntries(p.tasks.filter((t) => t.owner === 'frontend-dev').map((t) => [t.id, listRefs(p, t.id)])) };
+  return { ...p, tasks, refs, usage: sumUsage([...p.runs, ...p.tasks.flatMap((t) => t.runs)].map((r) => r.usage)) };
 }
 
 const server = http.createServer(async (req, res) => {
@@ -706,6 +747,20 @@ const server = http.createServer(async (req, res) => {
 
     if (req.method === 'GET' && url.pathname === '/') return send(res, 200, fs.readFileSync(path.join(import.meta.dirname, 'office.html')), 'text/html');
     if (req.method === 'GET' && url.pathname === '/board') return send(res, 200, fs.readFileSync(path.join(import.meta.dirname, 'index.html')), 'text/html');
+    if (req.method === 'GET' && url.pathname === '/refs') {
+      const rp = state.projects.find((x) => x.id === url.searchParams.get('project'));
+      const scope = url.searchParams.get('scope'), name = url.searchParams.get('name');
+      if (!rp || !refScopeOk(rp, scope) || refFileName(name) !== name) return send(res, 404, 'Not found', 'text/plain; charset=utf-8');
+      const f = path.join(refDir(rp, scope), name);
+      if (!fs.existsSync(f)) return send(res, 404, 'Not found', 'text/plain; charset=utf-8');
+      res.writeHead(200, {
+        'Content-Type': REF_TYPES[name.split('.').pop().toLowerCase()],
+        'Content-Security-Policy': "sandbox; default-src 'none'; style-src 'unsafe-inline'; img-src data:; font-src data:",
+        'X-Content-Type-Options': 'nosniff',
+        'Referrer-Policy': 'no-referrer',
+      });
+      return res.end(fs.readFileSync(f));
+    }
     if (req.method === 'GET' && url.pathname === '/design') {
       const dp = state.projects.find((x) => x.id === url.searchParams.get('project'));
       const tid = url.searchParams.get('task') || '';
@@ -826,8 +881,40 @@ const server = http.createServer(async (req, res) => {
 
     const p = parts[0] === 'api' && parts[1] === 'projects' && state.projects.find((x) => x.id === parts[2]);
     if (req.method === 'POST' && p) {
-      const body = await readJson(req);
+      const body = await readJson(req, parts[3] === 'refs' ? 15_000_000 : 100_000);
       const action = parts[3];
+
+      if (action === 'refs') {
+        const scope = String(body.scope ?? '');
+        if (!refScopeOk(p, scope)) return send(res, 400, { error: 'Unknown task for references' });
+        const dir = refDir(p, scope), sub = parts[4];
+        if (sub === 'link') {
+          const fig = parseFigmaUrl(body.url);
+          if (!fig) return send(res, 400, { error: 'Paste a Figma link (https://www.figma.com/design/…)' });
+          const links = refLinks(p, scope);
+          if (!links.includes(fig.url)) { if (links.length >= MAX_REFS) return send(res, 400, { error: 'Too many links' }); links.push(fig.url); }
+          save();
+          let message;
+          try { message = await importFigma(p, scope, fig); } catch (e) { message = `Link saved, but importing the frame failed: ${e.message}`; }
+          say(`🎨 [${p.name}] Figma reference added (${scope}): ${message}`);
+          return send(res, 200, { ok: true, message });
+        }
+        if (sub === 'remove') {
+          if (body.link) { const links = refLinks(p, scope); const i = links.indexOf(body.link); if (i >= 0) links.splice(i, 1); }
+          if (body.name) { const name = refFileName(body.name); if (name === body.name) fs.rmSync(path.join(dir, name), { force: true }); }
+          save();
+          return send(res, 200, { ok: true });
+        }
+        const name = refFileName(body.name);
+        if (!name) return send(res, 400, { error: 'Use an image (PNG, JPG, GIF, WebP) or an HTML file' });
+        const data = Buffer.from(String(body.data ?? ''), 'base64');
+        if (!data.length || data.length > MAX_REF_BYTES) return send(res, 400, { error: 'File must be between 1 byte and 10 MB' });
+        fs.mkdirSync(dir, { recursive: true });
+        if (fs.readdirSync(dir).length >= MAX_REFS) return send(res, 400, { error: `At most ${MAX_REFS} files here` });
+        fs.writeFileSync(path.join(dir, name), data);
+        say(`🎨 [${p.name}] design reference added (${scope}): ${name}`);
+        return send(res, 200, { ok: true, message: `Added ${name}` });
+      }
 
       if (action === 'decisions') {
         const d = p.decisions.find((x) => x.id === parts[4] && !x.answer);
@@ -856,6 +943,8 @@ const server = http.createServer(async (req, res) => {
         for (const t of p.tasks) if (fs.existsSync(path.join(WT, p.id, t.id))) removeWorktree(p, t);
         try { git(p.path, 'worktree', 'remove', '--force', path.join(WT, p.id, '_integration')); } catch { /* none */ }
         fs.rmSync(path.join(WT, p.id), { recursive: true, force: true });
+        fs.rmSync(path.join(REFS, p.id), { recursive: true, force: true });
+        fs.rmSync(path.join(DESIGNS, p.id), { recursive: true, force: true });
         if (state.focus === p.id) state.focus = null;
         state.projects = state.projects.filter((x) => x !== p);
         fs.rmSync(path.join(DATA, 'logs', p.id), { recursive: true, force: true });
