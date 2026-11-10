@@ -818,7 +818,7 @@ function runTests(p, t, wt, label, job) {
       let json = null;
       try { json = JSON.parse(fs.readFileSync(out, 'utf8')); } catch { /* no or invalid result file: the suite did not run */ }
       const output = text.slice(-8000);
-      const total = Number(json?.numTotalTests) || 0;
+      const total = (Number(json?.numPassedTests) || 0) + (Number(json?.numFailedTests) || 0); // executed, so skipped/todo tests do not count
       const r = total ? { ran: true, total, failing: jestFailures(json, wt), output, error: null }
         : { ran: false, total: 0, failing: [], output, error: output.slice(-3000) || `npm test exited ${code} without results` };
       Object.assign(rec, { status: job.stopped ? 'stopped' : r.ran ? 'ok' : 'error', exit: code, durationMs: Date.now() - t0 });
@@ -929,11 +929,14 @@ async function runBeTicket(p, t, job) {
     const hold = holdFor('be-qa');
     if (hold) return park('QA', hold);
     t.note = null; save();
+    // The tests run the dev's code, so a changed test script or Jest config could fake a clean run: make Quinn check it.
+    const testSetup = git(wt, 'diff', '--name-only', t.baseSha, '--', 'package.json', 'jest.config*', '**/jest.config*', 'test/setup*', 'tests/setup*', 'test/**/setup*', 'tests/**/setup*').split('\n').filter(Boolean);
     const reportFile = path.join(DATA, 'logs', p.id, `${t.id}-qa-${cycle}-${Date.now()}.report.md`);
     const qaPrompt = `${agentBody('be-qa')}\n\n---\nJira ticket under test: ${t.id} (${p.repo}):\n\n${p.idea}\n\n` +
       `App test run (npm test, done by the app outside your sandbox): ${tests.failing.length ? `${tests.failing.length} failing, all already failing on clean main:\n${tests.failing.map((f) => `- ${f}`).join('\n')}` : 'all passing'}.\n\n` +
       `The implementation is the uncommitted change set: inspect it with git status and git diff. The developer's notes are in ${p.planDir}/SUMMARY.md. ` +
       'Do not run the test suite or anything that needs a database or the network; you may run lint or typecheck if they work offline. ' +
+      (testSetup.length ? `WARNING: the change touches test setup files (${testSetup.join(', ')}). Check that the test script, Jest config and setup still run every test honestly; FAIL if tests are skipped, filtered or their results faked. ` : '') +
       'Judge the change against the acceptance criteria and the test results. ' + NM_RULE + ' ' +
       'Do not edit application code or tests. End your reply with exactly one line: VERDICT: PASS, VERDICT: FAIL or VERDICT: BLOCKED.';
     const qa = await codex(`${t.id}-qa-${cycle}`, qaPrompt, reportFile);
