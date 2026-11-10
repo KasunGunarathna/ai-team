@@ -795,6 +795,8 @@ const NM_RULE = 'node_modules is a link to the owner\'s install: never write, ed
 
 // The app (not an agent) runs the suite outside any sandbox, so tests reach the local DB; Quinn reviews offline.
 const TEST_TIMEOUT_MS = 20 * 60_000;
+// Tests run the dev's code unsandboxed (product-owner decision), so give them only what npm needs, not the app's tokens.
+const TEST_ENV = Object.fromEntries(['PATH', 'HOME', 'USER', 'LANG', 'TMPDIR', 'SHELL'].filter((k) => process.env[k]).map((k) => [k, process.env[k]]).concat([['CI', 'true']]));
 function runTests(p, t, wt, label, job) {
   const dir = path.join(DATA, 'logs', p.id);
   fs.mkdirSync(dir, { recursive: true });
@@ -806,7 +808,7 @@ function runTests(p, t, wt, label, job) {
   const t0 = Date.now();
   return new Promise((resolve) => {
     let text = '';
-    const child = spawn('npm', ['test', '--', '--json', `--outputFile=${out}`], { cwd: wt, env: { ...process.env, CI: 'true' }, stdio: ['ignore', 'pipe', 'pipe'], detached: true });
+    const child = spawn('npm', ['test', '--', '--json', `--outputFile=${out}`], { cwd: wt, env: TEST_ENV, stdio: ['ignore', 'pipe', 'pipe'], detached: true });
     job.child = child; // so Stop kills the test run too
     const timer = setTimeout(() => { text += '\n[timeout: killed]\n'; killTree(child); }, TEST_TIMEOUT_MS);
     const keep = (d) => { text = (text + d).slice(-200_000); };

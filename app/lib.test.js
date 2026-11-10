@@ -237,6 +237,6 @@ test('jestFailures lists failed tests and suites that failed to run, sorted', ()
 });
 
 test('isTestHarness flags files that control how tests run', () => {
-  for (const f of ['package.json', 'jest.config.ts', 'api/jest.setup.js', 'src/setupTests.ts', 'babel.config.js', '.babelrc', 'tsconfig.json', '__mocks__/db.js', 'tests/setup/test-db.js', 'test/globalSetup.ts']) assert.ok(isTestHarness(f), f);
+  for (const f of ['package.json', 'jest.config.ts', 'api/jest.setup.js', 'src/setupTests.ts', 'babel.config.js', '.babelrc', 'tsconfig.json', '__mocks__/db.js', 'tests/setup/test-db.js', 'test/globalSetup.ts', '.npmrc', 'api/.yarnrc.yml', 'vitest.config.ts', '.mocharc.json']) assert.ok(isTestHarness(f), f);
   for (const f of ['src/gift.ts', 'tests/gift.test.js', 'README.md']) assert.ok(!isTestHarness(f), f);
 });
