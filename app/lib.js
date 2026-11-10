@@ -301,3 +301,6 @@ export function jiraComment({ key, outcome, sections, cycles, baselineFailing, b
     `Branch: ${outcome === 'pushed' ? branchUrl : `${branch} (not pushed yet)`}\nMerge: manual`,
   ].join('\n\n');
 }
+
+// Which scheduler pool a project's jobs count against: BE tickets have their own capacity.
+export const poolOf = (p) => (p.kind === 'be-ticket' ? 'be' : 'main');

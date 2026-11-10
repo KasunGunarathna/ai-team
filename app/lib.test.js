@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseVerdict, nextTask, normaliseTasks, normaliseQuestions, secretFiles, formatClaudeEvent, formatCodexEvent, sumUsage, permissionRule, repoForKey, githubTreeUrl, summarySections, parseBaseline, commitType, ticketTitle, jiraComment } from './lib.js';
+import { parseVerdict, nextTask, normaliseTasks, normaliseQuestions, secretFiles, formatClaudeEvent, formatCodexEvent, sumUsage, permissionRule, repoForKey, githubTreeUrl, summarySections, parseBaseline, commitType, ticketTitle, jiraComment, poolOf } from './lib.js';
 
 test('parseVerdict takes the last verdict and defaults to BLOCKED', () => {
   assert.equal(parseVerdict('blah\nVERDICT: PASS'), 'PASS');
@@ -212,4 +212,10 @@ test('jiraComment pushed / push_failed / no_code', () => {
   const nc = jiraComment({ key: 'GIF-2', outcome: 'no_code', sections: { findings: '- data issue', steps: '1. run X' }, cycles: 0, baselineFailing: [], branch: null, branchUrl: null });
   assert.match(nc, /^AI Team — GIF-2: no code change needed\n\nFindings:\n- data issue\n\nSteps:\n1\. run X/);
   assert.doesNotMatch(nc, /Branch:/);
+});
+
+test('poolOf separates BE tickets from the project team', () => {
+  assert.equal(poolOf({ kind: 'be-ticket' }), 'be');
+  assert.equal(poolOf({ kind: 'ticket' }), 'main');
+  assert.equal(poolOf({ kind: 'idea' }), 'main');
 });

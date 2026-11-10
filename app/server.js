@@ -6,7 +6,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import os from 'node:os';
 import { spawn, execFile, execFileSync } from 'node:child_process';
-import { REF_TYPES, isImageRef, refFileName, parseFigmaUrl, TASK_ID, authFailure, codexRateLimits, tokensSince, isOpen, limitUntil, parseVerdict, nextTask, readyTasks, normaliseTasks, normaliseQuestions, secretFiles, formatClaudeEvent, formatCodexEvent, sumUsage, permissionRule, clip } from './lib.js';
+import { REF_TYPES, isImageRef, refFileName, parseFigmaUrl, TASK_ID, authFailure, codexRateLimits, tokensSince, isOpen, limitUntil, parseVerdict, nextTask, readyTasks, normaliseTasks, normaliseQuestions, secretFiles, formatClaudeEvent, formatCodexEvent, sumUsage, permissionRule, clip, poolOf, repoForKey, ticketTitle, summarySections } from './lib.js';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
 const DATA = process.env.AI_TEAM_DATA || path.join(ROOT, 'data');
@@ -21,7 +21,15 @@ const WT = path.join(DATA, 'worktrees'); // one git worktree per running task
 const HANDOFF_AT = Number(process.env.CONTEXT_HANDOFF_AT || 80); // % of context: hand a developer's work to a fresh session
 const MAX_HANDOFFS = 3; // per task attempt, so a task cannot loop forever
 const AUTH_RETRY_MS = 15 * 60_000; // after a login/subscription failure, try that engine again every 15 minutes
-const NICK = { 'pm-ba': 'Mira', 'backend-dev': 'Bolt', 'frontend-dev': 'Pixel', qa: 'Bugsy', 'ui-ux': 'Iris' };
+const NICK = { 'pm-ba': 'Mira', 'backend-dev': 'Bolt', 'frontend-dev': 'Pixel', qa: 'Bugsy', 'ui-ux': 'Iris', 'rc-dev': 'Rocco', 'gl-dev': 'Gigi', 'be-qa': 'Quinn' };
+// BE ticket team: Jira tickets for two backend repos, with its own job capacity (never blocks the project team).
+const BE_MAX = 3;
+const home = (p) => path.join(os.homedir(), p);
+const BE_REPOS = {
+  'reviewcook-api': { dir: process.env.RECK_API_DIR || home('Development/QRTiger/ReviewCook/reviewcook-api'), envFile: '.env', dev: 'rc-dev' },
+  'giftlips-api': { dir: process.env.GIF_API_DIR || home('Development/QRTiger/GiftLips/giftlips-api'), envFile: '.env.test', dev: 'gl-dev' },
+};
+const BE_MEMORY = path.join(DATA, 'be-tickets.json');
 const DESIGNS = path.join(DATA, 'designs'); // proposed/approved mockups, kept outside worktrees
 // Frontend tasks need an approved UI design (by Iris, the UI/UX agent) before the developer starts.
 const needsDesign = (t) => t.owner === 'frontend-dev' && t.design?.status !== 'approved';
@@ -71,7 +79,7 @@ state.contextWindows ??= {}; // model -> context window size learned from earlie
 state.limits ??= {};
 state.authFail ??= {};
 if (state.pausedUntil) { state.limits = { claude: state.pausedUntil, codex: state.pausedUntil }; delete state.pausedUntil; }
-const engineOf = (role) => (role === 'qa' || role === 'ui-ux' ? 'codex' : 'claude');
+const engineOf = (role) => (['qa', 'ui-ux', 'be-qa'].includes(role) ? 'codex' : 'claude');
 const ENGINE_NAME = { claude: 'Claude', codex: 'Codex' };
 const engineHold = (engine) => state.authFail[engine] ? `${ENGINE_NAME[engine]} login/subscription problem`
   : state.limits[engine] > Date.now() ? `Waiting for the ${ENGINE_NAME[engine]} usage limit to reset (${new Date(state.limits[engine]).toLocaleTimeString()})` : null;
@@ -102,12 +110,44 @@ const jobs = new Map(); // id -> { id, kind, projectId, project, taskId, label, 
 const roleBusy = {}; // role -> job id currently using that agent
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const projectJobs = (p) => [...jobs.values()].filter((j) => j.projectId === p.id);
+const teamJobs = (team) => [...jobs.values()].filter((j) => j.team === team).length;
 const busyText = () => [...jobs.values()].map((j) => j.label).join(' · ') || null;
 const roleFree = (role) => !roleBusy[role] && !state.breaks[role] && !engineHold(engineOf(role)) && ![...jobs.values()].some((j) => j.needs === role);
 
 // ---------- helpers ----------
 const git = (cwd, ...args) => execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
 const agentBody = (name) => fs.readFileSync(path.join(ROOT, '.claude', 'agents', `${name}.md`), 'utf8').replace(/^---[\s\S]*?---\s*/, '');
+// Add a line to the repo's local git exclude (never committed), e.g. to keep AI planning files out of PRs.
+function excludeIn(repoDir, entry) {
+  const exclude = path.resolve(repoDir, git(repoDir, 'rev-parse', '--git-path', 'info/exclude'));
+  const cur = fs.existsSync(exclude) ? fs.readFileSync(exclude, 'utf8') : '';
+  if (!cur.split('\n').includes(entry)) { fs.mkdirSync(path.dirname(exclude), { recursive: true }); fs.appendFileSync(exclude, `${cur && !cur.endsWith('\n') ? '\n' : ''}${entry}\n`); }
+}
+
+// ---------- BE ticket memory: data/be-tickets.json, one record per ticket keyed by "<repo>/<KEY>" ----------
+// A missing file is empty memory; a corrupt one throws rather than being overwritten.
+const readMemory = () => (fs.existsSync(BE_MEMORY) ? JSON.parse(fs.readFileSync(BE_MEMORY, 'utf8')) : {});
+function remember(p, t) {
+  const mem = readMemory(), k = `${p.repo}/${p.ticketKey}`, old = mem[k]?.id === p.id ? mem[k] : null;
+  mem[k] = {
+    id: p.id, key: p.ticketKey, repo: p.repo, ticket: p.idea, status: t.status, outcome: t.outcome ?? null,
+    branch: t.branch ?? p.branch, push: t.push ?? null, branchUrl: t.branchUrl ?? null, baseSha: t.baseSha ?? null, baseline: t.baseline ?? null,
+    attempts: t.attempts ?? [], runs: t.runs, plan: t.plan ?? null, summary: t.summary ?? null, files: t.files ?? [], comment: t.comment ?? null,
+    createdAt: old?.createdAt ?? now(), updatedAt: now(),
+  };
+  fs.writeFileSync(BE_MEMORY + '.tmp', JSON.stringify(mem, null, 2));
+  fs.renameSync(BE_MEMORY + '.tmp', BE_MEMORY);
+}
+// Up to the last 10 DONE tickets of a repo, one line each, for the dev prompt.
+function pastTickets(repo) {
+  return Object.values(readMemory()).filter((e) => e.repo === repo && e.status === 'DONE')
+    .sort((a, b) => String(a.updatedAt).localeCompare(String(b.updatedAt))).slice(-10)
+    .map((e) => {
+      const sec = summarySections(e.summary ?? '');
+      const first = (sec['backend changes'] ?? sec.findings ?? '').split('\n').map((l) => l.replace(/^\s*[-*]\s*/, '').trim()).find(Boolean);
+      return `- ${e.key}: ${first || ticketTitle(e.ticket ?? '')}${e.files?.length ? ` (files: ${e.files.join(', ')})` : ''}`;
+    }).join('\n');
+}
 function now() { return new Date().toISOString(); }
 
 // Terminal log. LOG_AGENT=0 hides the agents' own output lines and keeps workflow events.
@@ -635,23 +675,42 @@ async function runTaskJob(p, t, job) {
 
 const inFocus = (p) => !state.focus || state.focus === p.id;
 
-// Start one piece of work if an agent is free: queued planning first, then ready tasks of auto-run/queued projects.
-function startNext() {
-  for (const p of state.projects.filter(inFocus)) {
+// Placeholder: the BE ticket flow (plan, dev, QA, commit, push, comment) replaces this.
+async function runBeTicket(p, t, job) { return block(p, t, 'BE flow not implemented yet'); }
+async function runBeTicketJob(p, t, job) {
+  await runBeTicket(p, t, job);
+  remember(p, t);
+}
+
+// Start one piece of work for this team ('main' or 'be') if an agent is free.
+function startNext(team) {
+  const mine = state.projects.filter((p) => poolOf(p) === team);
+  if (team === 'be') { // focus mode is for the project team only; BE tickets start as soon as their agent is free
+    for (const p of mine) {
+      const t = readyTasks(p.tasks).find((x) => roleFree(x.skipDev ? 'be-qa' : x.owner));
+      if (!t) continue;
+      t.status = t.skipDev ? 'QA' : 'IN_PROGRESS';
+      startJob({ kind: 'task', team, projectId: p.id, project: p.name, taskId: t.id, label: `${p.name}: ${t.id}` }, (job) => runBeTicketJob(p, t, job));
+      return true;
+    }
+    return false;
+  }
+  // Project team: queued planning first, then ready tasks of auto-run/queued projects.
+  for (const p of mine.filter(inFocus)) {
     if (p.resumePlan && !projectJobs(p).length && roleFree('pm-ba')) {
       p.resumePlan = false;
-      startJob({ kind: 'plan', projectId: p.id, project: p.name, label: `${p.name}: PM/BA planning` }, (job) => plan(p, job).catch((e) => { p.status = 'NEW'; p.error = e.message; }));
+      startJob({ kind: 'plan', team, projectId: p.id, project: p.name, label: `${p.name}: PM/BA planning` }, (job) => plan(p, job).catch((e) => { p.status = 'NEW'; p.error = e.message; }));
       return true;
     }
   }
-  for (const p of state.projects.filter(inFocus)) {
+  for (const p of mine.filter(inFocus)) {
     if (p.status !== 'APPROVED' || p.resumePlan || !(p.auto || p.runBudget > 0) || p.tasks.some((t) => t.status === 'BLOCKED')) continue;
     if (projectJobs(p).some((j) => j.kind === 'plan')) continue;
     const t = readyTasks(p.tasks).find((x) => roleFree(needsDesign(x) ? 'ui-ux' : x.skipDev ? 'qa' : x.owner));
     if (!t) continue;
     if (!p.auto) p.runBudget--;
     t.status = needsDesign(t) ? 'DESIGN' : t.skipDev ? 'QA' : 'IN_PROGRESS'; // claimed, so no other job picks it
-    startJob({ kind: 'task', projectId: p.id, project: p.name, taskId: t.id, label: `${p.name}: ${t.id}` }, (job) => runTaskJob(p, t, job));
+    startJob({ kind: 'task', team, projectId: p.id, project: p.name, taskId: t.id, label: `${p.name}: ${t.id}` }, (job) => runTaskJob(p, t, job));
     return true;
   }
   return false;
@@ -666,7 +725,8 @@ function tick() {
     if (state.limits[engine] && Date.now() >= state.limits[engine]) { delete state.limits[engine]; save(); say(`🔋 ${ENGINE_NAME[engine]} usage limit reset: back to work`); }
     if (state.authFail[engine] && Date.now() >= state.authFail[engine].retryAt) { delete state.authFail[engine]; save(); say(`🔑 trying ${ENGINE_NAME[engine]} again`); }
   }
-  while (jobs.size < MAX_AGENTS && startNext());
+  while (teamJobs('main') < MAX_AGENTS && startNext('main'));
+  while (teamJobs('be') < BE_MAX && startNext('be'));
 }
 setInterval(tick, 15_000);
 const kick = () => setImmediate(tick);
@@ -678,7 +738,7 @@ setInterval(() => {
   if (!DAILY_AT || d.toTimeString().slice(0, 5) !== DAILY_AT || state.lastDaily === today) return;
   state.lastDaily = today; save();
   say(`⏰ daily run (${DAILY_TASKS} task(s) per approved project)`);
-  for (const p of state.projects) if (p.status === 'APPROVED' && !p.auto) p.runBudget += DAILY_TASKS;
+  for (const p of state.projects) if (p.status === 'APPROVED' && !p.auto && p.kind !== 'be-ticket') p.runBudget += DAILY_TASKS;
   save(); kick();
 }, 30_000);
 
@@ -852,6 +912,30 @@ const server = http.createServer(async (req, res) => {
 
     if (req.method === 'POST' && url.pathname === '/api/projects') {
       const body = await readJson(req);
+      if (body.kind === 'be-ticket') { // BE ticket team: the repo comes from the key prefix; name and path in the body are ignored
+        const key = String(body.ticketKey ?? '').trim().toUpperCase(), text = String(body.idea ?? '').trim();
+        const repo = /^[A-Z][A-Z0-9]*-\d+$/.test(key) ? repoForKey(key) : null;
+        if (!repo) return send(res, 400, { error: 'Jira key must start with RECK- (ReviewCook) or GIF- (GiftLips)' });
+        if (!text) return send(res, 400, { error: 'Ticket text is required' });
+        if (state.projects.some((x) => x.kind === 'be-ticket' && x.repo === repo && x.ticketKey === key)) return send(res, 400, { error: `${key} is already added. Remove the old one first.` });
+        const r = BE_REPOS[repo];
+        let isRepo = fs.existsSync(r.dir) && fs.statSync(r.dir).isDirectory();
+        if (isRepo) try { git(r.dir, 'rev-parse', '--is-inside-work-tree'); } catch { isRepo = false; }
+        if (!isRepo) return send(res, 400, { error: `Repo folder not found: ${r.dir}` });
+        excludeIn(r.dir, '.aiteam/');
+        const id = crypto.randomUUID().slice(0, 8);
+        const p = {
+          id, kind: 'be-ticket', ticketKey: key, repo, name: key, path: r.dir, idea: text, status: 'APPROVED', auto: true,
+          branch: key, planDir: `.aiteam/${key}`, taskDir: `.aiteam/${key}`,
+          tasks: [{ id: key, title: ticketTitle(text), owner: r.dev, status: 'READY', dependsOn: [], phase: 1, cycles: 0, runs: [] }],
+          runs: [], decisions: [], allowTools: [], runBudget: 0,
+        };
+        state.projects.push(p);
+        remember(p, p.tasks[0]);
+        say(`+ BE ticket added: ${key} (${repo})`);
+        save(); kick();
+        return send(res, 201, { id });
+      }
       const { name, path: dir, idea } = body;
       const kind = body.kind === 'ticket' ? 'ticket' : 'idea';
       const ticketKey = kind === 'ticket' ? String(body.ticketKey ?? '').trim().toUpperCase() : null;
@@ -863,12 +947,7 @@ const server = http.createServer(async (req, res) => {
       const id = crypto.randomUUID().slice(0, 8);
       say(`+ project added: ${name.trim()} (${abs})`);
       if (state.projects.some((x) => x.kind === 'ticket' && x.ticketKey === ticketKey && x.path === abs)) return send(res, 400, { error: `${ticketKey} is already added for this repo` });
-      if (kind === 'ticket') {
-        // Keep AI planning files out of git so they never land in the ticket's PR.
-        const exclude = path.resolve(abs, git(abs, 'rev-parse', '--git-path', 'info/exclude'));
-        const cur = fs.existsSync(exclude) ? fs.readFileSync(exclude, 'utf8') : '';
-        if (!cur.split('\n').includes('.aiteam/')) { fs.mkdirSync(path.dirname(exclude), { recursive: true }); fs.appendFileSync(exclude, `${cur && !cur.endsWith('\n') ? '\n' : ''}.aiteam/\n`); }
-      }
+      if (kind === 'ticket') excludeIn(abs, '.aiteam/'); // keep AI planning files out of git so they never land in the ticket's PR
       state.projects.push({
         id, kind, ticketKey, name: name.trim(), path: abs, idea: idea.trim(), status: 'NEW', tasks: [], runs: [], decisions: [], allowTools: [],
         branch: kind === 'ticket' ? `ai-team/${ticketKey}` : `ai-team/${id}`,
