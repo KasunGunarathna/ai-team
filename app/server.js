@@ -892,6 +892,8 @@ async function runBeTicket(p, t, job) {
       if (!plan || job.stopped) return block(p, t, 'Stopped by you during planning.');
       raiseDenials(p, plan.denials, `${t.id} (Captain Plan)`);
       if (plan.limited || plan.authFail) return park('DEV', engineHold('claude') ?? 'Waiting for Claude');
+      const unsafe1 = beUnsafe(p, t, wt, 'nothing more will run there'); // the planner must not have touched agent config or secrets
+      if (unsafe1) return block(p, t, unsafe1);
       t.plan = keepAi('PLAN.md');
       (t.attempts ??= []).push({ at: now(), kind: 'plan', cycle, log: plan.logPath, usage: plan.usage ?? null });
       remember(p, t);
@@ -912,6 +914,8 @@ async function runBeTicket(p, t, job) {
         const reviewPrompt = `${agentBody('be-qa')}\n\n---\nTest-plan review for Jira ticket ${t.id} (${p.repo}):\n\n${p.idea}\n\n` +
           `Read ${p.planDir}/PLAN.md, especially "## Test plan", and the code it names. Write ${p.planDir}/TEST-REVIEW.md: the tests you agree with, tests to add (edge cases, negative paths, authorization, regressions), and how you will judge the result. ` +
           'Do not run the test suite, do not change code or tests. ' + NM_RULE;
+        const unsafeR = beUnsafe(p, t, wt, 'the test-plan review will not run there');
+        if (unsafeR) return block(p, t, unsafeR);
         const rev = await codex(`${t.id}-testplan`, reviewPrompt, reviewFile);
         if (job.paused) return park('DEV', 'Paused for the team tea break (test-plan review restarts)');
         if (!rev || job.stopped) return block(p, t, 'Stopped by you during the test-plan review.');
