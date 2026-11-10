@@ -38,11 +38,22 @@ grep -q 'RECK-' "$tmp/body" || fail "MINT-1 error does not name RECK-: $(cat "$t
 curl -sf "$URL/api/state" | node -e '
   const s = JSON.parse(require("fs").readFileSync(0, "utf8"));
   const p = s.projects.find((x) => x.kind === "be-ticket" && x.ticketKey === "RECK-5");
-  if (!p || p.repo !== "reviewcook-api" || p.tasks[0]?.owner !== "rc-dev" || p.tasks[0]?.status !== "READY") { console.error(JSON.stringify(p)); process.exit(1); }
-' || fail "state does not show RECK-5 as a READY rc-dev ticket"
+  if (!p || p.repo !== "reviewcook-api" || p.tasks[0]?.owner !== "rc-dev" || p.tasks[0]?.status !== "TODO" || !p.tasks[0]?.queuedAt) { console.error(JSON.stringify(p)); process.exit(1); }
+' || fail "state does not show RECK-5 as a queued (TODO) rc-dev ticket"
 
 [ "$(post /api/projects '{"kind":"be-ticket","ticketKey":"RECK-5","idea":"Fix X"}')" = 400 ] || fail "duplicate RECK-5 not rejected"
 grep -q 'already added' "$tmp/body" || fail "duplicate error: $(cat "$tmp/body")"
+
+squad() { code=$(post /api/squad/agent "$1"); [ "$code" = "$2" ] || fail "squad $1 → $code $(cat "$tmp/body")"; [ -z "${3:-}" ] || grep -q "$3" "$tmp/body" || fail "squad $1: $(cat "$tmp/body")"; }
+squad '{"role":"rc-dev","action":"stop"}' 400 'not working'
+squad '{"role":"x","action":"stop"}' 400
+squad '{"role":"gl-dev","action":"swap","ticketId":"RECK-5"}' 400 'another dev'
+squad '{"role":"be-qa","action":"swap","ticketId":"RECK-5"}' 400
+squad '{"role":"rc-dev","action":"swap","ticketId":"RECK-5"}' 200
+curl -sf "$URL/api/state" | node -e '
+  const s = JSON.parse(require("fs").readFileSync(0, "utf8"));
+  if (!(s.projects.find((x) => x.ticketKey === "RECK-5")?.tasks[0]?.priority > 0)) process.exit(1);
+' || fail "swap did not raise RECK-5 priority"
 
 grep -qx '.aiteam/' "$tmp/reck/.git/info/exclude" || fail ".aiteam/ not in info/exclude"
 grep -q '"reviewcook-api/RECK-5"' "$tmp/data/be-tickets.json" || fail "memory entry missing"

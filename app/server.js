@@ -6,7 +6,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import os from 'node:os';
 import { spawn, execFile, execFileSync } from 'node:child_process';
-import { REF_TYPES, isImageRef, refFileName, parseFigmaUrl, TASK_ID, authFailure, codexRateLimits, tokensSince, isOpen, limitUntil, parseVerdict, nextTask, readyTasks, normaliseTasks, normaliseQuestions, secretFiles, formatClaudeEvent, formatCodexEvent, sumUsage, permissionRule, clip, poolOf, repoForKey, ticketTitle, summarySections, githubTreeUrl, parseBaseline, jestFailures, isTestHarness, commitType, jiraComment, newestVersion } from './lib.js';
+import { REF_TYPES, isImageRef, refFileName, parseFigmaUrl, TASK_ID, authFailure, codexRateLimits, tokensSince, isOpen, limitUntil, parseVerdict, nextTask, readyTasks, normaliseTasks, normaliseQuestions, secretFiles, formatClaudeEvent, formatCodexEvent, sumUsage, permissionRule, clip, poolOf, repoForKey, ticketTitle, summarySections, githubTreeUrl, parseBaseline, jestFailures, isTestHarness, commitType, jiraComment, newestVersion, prLinkFromPush, squadNext } from './lib.js';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
 const DATA = process.env.AI_TEAM_DATA || path.join(ROOT, 'data');
@@ -21,7 +21,7 @@ const WT = path.join(DATA, 'worktrees'); // one git worktree per running task
 const HANDOFF_AT = Number(process.env.CONTEXT_HANDOFF_AT || 80); // % of context: hand a developer's work to a fresh session
 const MAX_HANDOFFS = 3; // per task attempt, so a task cannot loop forever
 const AUTH_RETRY_MS = 15 * 60_000; // after a login/subscription failure, try that engine again every 15 minutes
-const NICK = { 'pm-ba': 'Mira', 'backend-dev': 'Bolt', 'frontend-dev': 'Pixel', qa: 'Bugsy', 'ui-ux': 'Iris', 'rc-dev': 'Rocco', 'gl-dev': 'Gigi', 'be-qa': 'Quinn' };
+const NICK = { 'pm-ba': 'Mira', 'backend-dev': 'Bolt', 'frontend-dev': 'Pixel', qa: 'Bugsy', 'ui-ux': 'Iris', 'rc-dev': 'Rocket Rocco', 'gl-dev': 'Giggly Gigi', 'be-qa': 'Detective Quinn', 'squad-pm': 'Captain Plan' };
 // BE ticket team: Jira tickets for two backend repos, with its own job capacity (never blocks the project team).
 const BE_MAX = 3;
 const home = (p) => path.join(os.homedir(), p);
@@ -87,7 +87,7 @@ state.contextWindows ??= {}; // model -> context window size learned from earlie
 state.limits ??= {};
 state.authFail ??= {};
 if (state.pausedUntil) { state.limits = { claude: state.pausedUntil, codex: state.pausedUntil }; delete state.pausedUntil; }
-const engineOf = (role) => (['qa', 'ui-ux', 'be-qa'].includes(role) ? 'codex' : 'claude');
+const engineOf = (role) => (role === 'squad-pm' ? 'none' : ['qa', 'ui-ux', 'be-qa'].includes(role) ? 'codex' : 'claude'); // Captain Plan is the app, no model
 const ENGINE_NAME = { claude: 'Claude', codex: 'Codex' };
 const engineHold = (engine) => state.authFail[engine] ? `${ENGINE_NAME[engine]} login/subscription problem`
   : state.limits[engine] > Date.now() ? `Waiting for the ${ENGINE_NAME[engine]} usage limit to reset (${new Date(state.limits[engine]).toLocaleTimeString()})` : null;
@@ -378,7 +378,7 @@ function retryTask(p, t, mode, note) {
   if (mode === 'restart' && p.kind === 'be-ticket') { removeBeWorktree(p, t); Object.assign(t, { baseline: null, outcome: null, comment: null, branchUrl: null }); } // never deletes a branch with commits
   else if (mode === 'restart') removeWorktree(p, t);
   p.decisions = p.decisions.filter((d) => !(['blocked', 'push'].includes(d.kind) && d.taskId === t.id && !d.answer));
-  Object.assign(t, { status: 'READY', cycles: 0, note: null, skipDev: false, feedback: null, instructions: note || null });
+  Object.assign(t, { status: 'READY', cycles: 0, note: null, skipDev: false, feedback: null, instructions: note || t.instructions || null }); // a Change-task note survives an empty retry note
   if (!p.auto) p.runBudget = Math.max(p.runBudget, 1);
 }
 
@@ -746,19 +746,23 @@ function removeBeWorktree(p, t) {
 function pushBranch(p) {
   return new Promise((resolve) => execFile('git', ['push', '-u', 'origin', p.branch], { cwd: p.path, env: NO_PROMPT, timeout: 120_000 }, (err, _out, stderr) => {
     if (err) return resolve({ ok: false, error: String(stderr || err.message).trim() });
-    let url = null;
-    try { url = githubTreeUrl(git(p.path, 'remote', 'get-url', 'origin'), p.branch); } catch { /* no URL, the push still succeeded */ }
-    resolve({ ok: true, url });
+    let url = null, prUrl = null;
+    try {
+      const remote = git(p.path, 'remote', 'get-url', 'origin');
+      url = githubTreeUrl(remote, p.branch);
+      prUrl = prLinkFromPush(stderr, remote, p.branch); // git only: the link GitHub prints, never the API
+    } catch { /* no URL, the push still succeeded */ }
+    resolve({ ok: true, url, prUrl });
   }));
 }
 
 // outcome: 'pushed' | 'push_failed' | 'no_code'. The comment is built by the app from SUMMARY.md, never by an agent.
 function finishBe(p, t, outcome, extra = {}) {
-  const branchUrl = outcome === 'pushed' ? extra.branchUrl : null;
+  const branchUrl = outcome === 'pushed' ? extra.branchUrl : null, prUrl = outcome === 'pushed' ? extra.prUrl ?? null : null;
   Object.assign(t, {
-    status: 'DONE', outcome, branchUrl, instructions: null, feedback: null,
+    status: 'DONE', outcome, branchUrl, prUrl, instructions: null, feedback: null,
     note: outcome === 'push_failed' ? `Push failed: ${p.branch} is committed locally in ${p.path}` : null,
-    comment: jiraComment({ key: p.ticketKey, outcome, sections: summarySections(t.summary ?? ''), cycles: t.cycles ?? 0, baselineFailing: t.baseline?.failing ?? [], branch: p.branch, branchUrl }),
+    comment: jiraComment({ key: p.ticketKey, outcome, sections: summarySections(t.summary ?? ''), cycles: t.cycles ?? 0, baselineFailing: t.baseline?.failing ?? [], branch: p.branch, branchUrl, prUrl }),
   });
   remember(p, t);
   save();
@@ -770,7 +774,7 @@ function finishBe(p, t, outcome, extra = {}) {
 function settlePush(p, t, push) {
   t.push = push;
   remember(p, t);
-  if (push.ok) return finishBe(p, t, 'pushed', { branchUrl: push.url ?? `${p.branch} (pushed)` });
+  if (push.ok) return finishBe(p, t, 'pushed', { branchUrl: push.url ?? `${p.branch} (pushed)`, prUrl: push.prUrl });
   finishBe(p, t, 'push_failed');
   addDecision(p, {
     kind: 'push', taskId: t.id,
@@ -984,17 +988,24 @@ async function runBeTicketJob(p, t, job) {
 }
 
 // Start one piece of work for this team ('main' or 'be') if an agent is free.
+// A squad dev holds one ticket at a time, even while the app (not the agent) runs that ticket's tests.
+const squadJobFor = (role) => [...jobs.values()].find((j) => j.team === 'be' && (role === 'be-qa' ? j.role === 'be-qa'
+  : state.projects.find((p) => p.id === j.projectId)?.tasks[0]?.owner === role));
+const squadBusy = (role) => role !== 'be-qa' && !!squadJobFor(role);
+
 function startNext(team) {
   const mine = state.projects.filter((p) => poolOf(p) === team);
   if (team === 'be') { // focus mode is for the project team only; BE tickets start as soon as their agent is free
-    for (const p of mine) {
-      const t = readyTasks(p.tasks).find((x) => roleFree(x.skipDev ? 'be-qa' : x.owner));
-      if (!t) continue;
-      t.status = t.skipDev ? 'QA' : 'IN_PROGRESS';
-      startJob({ kind: 'task', team, projectId: p.id, project: p.name, taskId: t.id, label: `${p.name}: ${t.id}` }, (job) => runBeTicketJob(p, t, job));
-      return true;
-    }
-    return false;
+    if (state.breaks['squad-pm']) return false; // Captain Plan on a break: nothing is handed out
+    const tickets = mine.map((p) => p.tasks[0]).filter(Boolean);
+    const t = squadNext(tickets, (role) => roleFree(role) && !squadBusy(role));
+    if (!t) return false;
+    const p = mine.find((x) => x.tasks[0] === t);
+    t.status = t.skipDev ? 'QA' : 'IN_PROGRESS';
+    t.dispatchedAt = now();
+    say(`🦸 Captain Plan hands ${t.id} to ${NICK[t.skipDev ? 'be-qa' : t.owner]}`);
+    startJob({ kind: 'task', team, projectId: p.id, project: p.name, taskId: t.id, label: `${p.name}: ${t.id}` }, (job) => runBeTicketJob(p, t, job));
+    return true;
   }
   // Project team: queued planning first, then ready tasks of auto-run/queued projects.
   for (const p of mine.filter(inFocus)) {
@@ -1211,6 +1222,35 @@ const server = http.createServer(async (req, res) => {
       return send(res, 200, { ok: true });
     }
 
+    // Squad agent controls, one agent at a time: stop, change task (stop + note), swap to another TODO ticket. Work is never deleted.
+    if (req.method === 'POST' && url.pathname === '/api/squad/agent') {
+      const { role, action, note, ticketId } = await readJson(req);
+      if (!['rc-dev', 'gl-dev', 'be-qa', 'squad-pm'].includes(role)) return send(res, 400, { error: 'Unknown squad agent' });
+      const dev = role === 'rc-dev' || role === 'gl-dev';
+      if (!(action === 'stop' && role !== 'squad-pm') && !(dev && ['change', 'swap'].includes(action))) return send(res, 400, { error: `${NICK[role]} cannot ${action}` });
+      const job = squadJobFor(role);
+      const ticketOf = (j) => state.projects.find((p) => p.id === j?.projectId)?.tasks[0];
+      const stop = () => { job.stopped = true; killTree(job.child); say(`⏹ ${NICK[role]} stopped by you: ${job.label} goes to BLOCKED (work kept)`); };
+      if (action === 'swap') {
+        const t = state.projects.filter((p) => p.kind === 'be-ticket').map((p) => p.tasks[0]).find((x) => x?.id === ticketId);
+        if (!t || t.status !== 'TODO') return send(res, 400, { error: 'Ticket not in the to-do list' });
+        if (t.owner !== role) return send(res, 400, { error: 'Ticket is for another dev' });
+        t.priority = Date.now();
+        say(`↪ ${NICK[role]} gets ${t.id} next`);
+        if (job) stop();
+      } else {
+        if (!job) return send(res, 400, { error: `${NICK[role]} is not working on a ticket` });
+        if (action === 'change') {
+          const text = String(note ?? '').trim().slice(0, 4000);
+          if (!text) return send(res, 400, { error: 'Write what to change' });
+          ticketOf(job).instructions = text;
+        }
+        stop();
+      }
+      save(); kick();
+      return send(res, 200, { ok: true });
+    }
+
     if (req.method === 'POST' && url.pathname === '/api/projects') {
       const body = await readJson(req);
       if (body.kind === 'be-ticket') { // BE ticket team: the repo comes from the key prefix; name and path in the body are ignored
@@ -1228,7 +1268,7 @@ const server = http.createServer(async (req, res) => {
         const p = {
           id, kind: 'be-ticket', ticketKey: key, repo, name: key, path: r.dir, idea: text, status: 'APPROVED', auto: true,
           branch: key, planDir: `.aiteam/${key}`, taskDir: `.aiteam/${key}`,
-          tasks: [{ id: key, title: ticketTitle(text), owner: r.dev, status: 'READY', dependsOn: [], phase: 1, cycles: 0, runs: [] }],
+          tasks: [{ id: key, title: ticketTitle(text), owner: r.dev, status: 'TODO', queuedAt: Date.now(), priority: 0, dependsOn: [], phase: 1, cycles: 0, runs: [] }],
           runs: [], decisions: [], allowTools: [], runBudget: 0,
         };
         state.projects.push(p);
