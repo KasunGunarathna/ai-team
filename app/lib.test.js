@@ -112,3 +112,13 @@ test('readyTasks returns every startable task in order', async () => {
   const t = (id, status, dependsOn = []) => ({ id, status, dependsOn });
   assert.deepEqual(readyTasks([t('A', 'DONE'), t('B', 'READY', ['A']), t('C', 'READY'), t('D', 'READY', ['C']), t('E', 'IN_PROGRESS')]).map((x) => x.id), ['B', 'C']);
 });
+
+test('authFailure spots login and subscription problems only on failed runs', async () => {
+  const { authFailure } = await import('./lib.js');
+  assert.equal(authFailure({ text: 'Added OAuth token expired handling' }, 0), null);
+  assert.ok(authFailure({ isError: true, text: 'Invalid API key · Please run /login' }, 1));
+  assert.ok(authFailure({ errorText: 'unexpected status 401 Unauthorized' }, 1));
+  assert.ok(authFailure({ stderr: 'Error: Not logged in. Run codex login.' }, 1));
+  assert.ok(authFailure({ isError: true, text: 'x', apiStatus: 403 }, 1));
+  assert.equal(authFailure({ isError: true, text: 'TypeError: x is undefined' }, 1), null);
+});

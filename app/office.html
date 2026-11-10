@@ -59,6 +59,15 @@
   .agent.tea .bob { animation:breathe 2.6s ease-in-out infinite; }
   .agent .backhead, .agent .shut, .agent .cup { display:none; }
   .agent.tea .cup { display:inline; }
+  .agent .batt { display:none; } .agent.charging .batt { display:inline; } .agent.charging .battfill { animation:blink 1s steps(2) infinite; }
+  .desk .lowbat { display:none; } .desk.lowbat .lowbat { display:inline; animation:blink 1s steps(2) infinite; } .desk.lowbat .code { display:none; }
+  @keyframes blink { 50% { opacity:.15; } }
+  .charge { transform-box:fill-box; transform-origin:left center; animation:charge 3.2s ease-in-out infinite; }
+  @keyframes charge { 0% { transform:scaleX(.06); fill:#fa5252; } 55% { fill:#fab005; } 100% { transform:scaleX(1); fill:#40c057; } }
+  .bolt { animation:zap .8s ease-in-out infinite alternate; transform-box:fill-box; transform-origin:center; }
+  @keyframes zap { from { transform:scale(.85); } to { transform:scale(1.15); } }
+  #reader .light { fill:#40c057; } #reader.fail .light { fill:#fa5252; animation:blink .7s steps(2) infinite; }
+  .chip.outage { color:#fff; background:#e8590c; border-color:#e8590c; } .chip.auth { color:#fff; background:#c92a2a; border-color:#c92a2a; }
   .agent.back .face, .agent.back .glasses { display:none; } .agent.back .backhead { display:inline; }
 
   .agent.away { opacity:0; pointer-events:none; }
@@ -80,7 +89,7 @@
   @keyframes zz { 0% { opacity:0; transform:translate(0,0); } 50% { opacity:1; } 100% { opacity:0; transform:translate(10px,-18px); } }
   #nightveil { transition:opacity 1.2s; pointer-events:none; }
   text { font-family:ui-rounded, "SF Pro Rounded", "Nunito", system-ui, sans-serif; }
-  @media (prefers-reduced-motion: reduce) { .agent { transition:opacity .3s; } .agent *, .desk .code, #ball, .steam, .zz { animation:none !important; } }
+  @media (prefers-reduced-motion: reduce) { .agent { transition:opacity .3s; } .agent *, .desk .code, #ball, .steam, .zz, .charge, .bolt, .desk .lowbat, #reader .light { animation:none !important; } }
 </style>
 </head>
 <body>
@@ -90,6 +99,8 @@
   <span class="chip" id="workChip"></span>
   <span class="chip focus" id="focusChip" hidden title="Click to clear the focus"></span>
   <span class="chip" id="pauseChip" hidden></span>
+  <span class="chip outage" id="claudeChip" hidden></span>
+  <span class="chip outage" id="codexChip" hidden></span>
   <button class="ghost" id="resumeBtn" hidden>Resume now</button>
   <button class="ghost" id="teaBtn">☕ Team tea break</button>
   <button class="ghost" id="soundBtn" title="Sounds for task start, task done, blocked, approvals and a reminder every 2 minutes"></button>
@@ -130,6 +141,15 @@
     <text x="22" y="36" font-size="20" font-weight="700" fill="#2b2d42">📋 Sprint board</text>
     <g id="wb"></g>
   </g>
+
+  <!-- door with key-card reader (red and blinking when a login/subscription fails) -->
+  <g transform="translate(262,94)">
+    <rect width="86" height="154" rx="6" fill="#b08968" stroke="#7f5539" stroke-width="5"/>
+    <rect x="12" y="14" width="62" height="54" rx="4" fill="#9c6644"/><rect x="12" y="82" width="62" height="58" rx="4" fill="#9c6644"/>
+    <circle cx="72" cy="86" r="5" fill="#ffd43b"/>
+    <g id="reader" transform="translate(94,64)"><rect width="18" height="30" rx="4" fill="#343a40"/><circle class="light" cx="9" cy="9" r="4"/><rect x="4" y="18" width="10" height="3" rx="1" fill="#868e96"/></g>
+  </g>
+  <g id="outage" opacity="0" style="transition:opacity .6s" transform="translate(400,26)"></g>
 
   <!-- clock + sign -->
   <g transform="translate(880,72)">
@@ -235,6 +255,10 @@ const SPOTS = [
 ];
 const TEA = ['coffee', 'fridge', 'cooler', 'plant']; // tea-break spots during a usage-limit pause
 const BOARD_SPOT = { x: 580, y: 262 };
+const CHARGE = ['sofa1', 'sofa2', 'pongL', 'pongR']; // usage limit: recharge in the lounge
+const DOOR = [{ id: 'door1', x: 290, y: 268 }, { id: 'door2', x: 372, y: 282, lift: 40 }]; // login problem: waiting at the door
+const engineOf = (role) => (role === 'qa' ? 'codex' : 'claude');
+const holdOf = (role) => { const e = engineOf(role); return S.authFail?.[e] ? 'auth' : S.limits?.[e] > Date.now() ? 'limit' : null; };
 const $ = (id) => document.getElementById(id);
 const NS = 'http://www.w3.org/2000/svg';
 const svgEl = (markup) => { const g = document.createElementNS(NS, 'g'); g.innerHTML = markup; return g; };
@@ -261,6 +285,7 @@ for (const t of TEAM) {
       <ellipse class="glow" cx="0" cy="282" rx="80" ry="44" fill="${t.shirt}" filter="url(#soft)"/>
       <rect x="-54" y="236" width="108" height="72" rx="8" fill="#343a40"/>
       <rect class="scr" x="-47" y="243" width="94" height="56" rx="4" fill="#212529"/>
+      <text class="lowbat" x="0" y="278" text-anchor="middle" font-size="15" font-weight="800" fill="#ff6b6b">🔋 LOW</text>
       <clipPath id="clip-${t.role}"><rect x="-47" y="243" width="94" height="56" rx="4"/></clipPath>
       <g clip-path="url(#clip-${t.role})"><g class="code">
         ${Array.from({ length: 8 }, (_, i) => `<rect x="${-40 + (i % 3) * 8}" y="${250 + i * 12}" width="${30 + ((i * 17) % 40)}" height="5" rx="2" fill="${i % 2 ? t.shirt : '#69db7c'}"/>`).join('')}
@@ -316,6 +341,7 @@ for (const t of TEAM) {
       ${hairFor(t)}
       <g transform="translate(0,72)"><rect x="-32" y="-11" width="64" height="20" rx="10" fill="#fff" stroke="${t.shirt}" stroke-width="2.5"/><text y="4" text-anchor="middle" font-size="12" font-weight="800" fill="#2b2d42">${t.name}</text></g>
     </g>
+    <g class="batt"><rect x="24" y="-52" width="26" height="14" rx="3" fill="#fff" stroke="#2b2d42" stroke-width="2"/><rect x="50" y="-48" width="3" height="6" fill="#2b2d42"/><rect class="battfill" x="27" y="-49" width="6" height="8" fill="#fa5252"/></g>
     <g class="cup"><rect x="20" y="26" width="13" height="13" rx="3" fill="#fff" stroke="#adb5bd" stroke-width="2"/><path d="M33 29q5 0 5 4t-5 4" stroke="#adb5bd" stroke-width="2" fill="none"/><path class="steam" d="M26 22q-3 -5 0 -10" stroke="#ced4da" stroke-width="2" fill="none" stroke-linecap="round"/></g>
     <g class="bubble" opacity="0">
       <rect class="bbox" x="-60" y="-104" width="120" height="32" rx="14" fill="#fff" stroke="#2b2d42" stroke-width="2.5"/>
@@ -381,15 +407,18 @@ function taskTitle(active) {
 function update() {
   if (!S) return;
   const nowMs = Date.now();
-  const paused = S.teaBreak || (S.pausedUntil && S.pausedUntil > nowMs);
+  const paused = S.teaBreak;
+  let chargeIndex = 0, doorIndex = 0;
   const waiting = S.projects.reduce((n, p) => n + p.decisions.filter((d) => !d.answer).length, 0);
   let napIndex = 0;
   for (const t of TEAM) {
-    const act = activeFor(t.role), isActive = !!act, onBreak = !!S.breaks[t.role];
+    const act = activeFor(t.role), isActive = !!act, onBreak = !!S.breaks[t.role], hold = isActive ? null : holdOf(t.role);
     setClass(t, 'away', !S.open && !isActive);
     setClass(t, 'typing', isActive);
     setClass(t, 'back', isActive);
-    setClass(t, 'tea', (!!paused || onBreak) && !isActive);
+    setClass(t, 'tea', (!!paused || onBreak) && !isActive && !hold);
+    setClass(t, 'charging', hold === 'limit');
+    $('desk-' + t.role).classList.toggle('lowbat', hold === 'limit');
     $('desk-' + t.role).classList.toggle('on', isActive);
 
     if (isActive) {
@@ -399,11 +428,20 @@ function update() {
       speak(t, t.role === 'pm-ba' ? `${verb} ${clip(act.project, 22)}` : `${verb} ${id}${taskTitle(act) ? ' · ' + clip(taskTitle(act), 22) : ''}`);
     } else if (!S.open) {
       speak(t, '');
+    } else if (hold === 'auth') {
+      const d = DOOR[doorIndex++ % DOOR.length];
+      place(t, d.x, d.y, d.id, first);
+      speak(t, '🔑 Login needed', d.lift);
+    } else if (hold === 'limit') {
+      const chargeSpot = CHARGE[chargeIndex++ % CHARGE.length];
+      const s = SPOTS.find((x) => x.id === chargeSpot);
+      place(t, s.x, s.y, s.id, first);
+      speak(t, '🔋 Recharging', s.lift); // the reset time is on the whiteboard and in the header
     } else if (paused || onBreak) {
       const teaSpot = TEA[napIndex++ % TEA.length];
       const s = SPOTS.find((x) => x.id === teaSpot);
       place(t, s.x, s.y, s.id, first);
-      speak(t, paused && !S.teaBreak ? `☕ Tea break · back ${hhmm(S.pausedUntil)}` : onBreak && !paused ? '☕ On a break' : '☕ Tea break!', s.lift);
+      speak(t, onBreak && !paused ? '☕ On a break' : '☕ Tea break!', s.lift);
     } else if (t.role === 'pm-ba' && waiting) {
       place(t, BOARD_SPOT.x, BOARD_SPOT.y, 'board', first);
       speak(t, `⚑ ${waiting} decision${waiting > 1 ? 's' : ''} need you!`);
@@ -449,7 +487,17 @@ function scenery() {
 }
 
 function hud() {
-  const open = S.open, limited = S.pausedUntil && S.pausedUntil > Date.now(), paused = S.teaBreak || limited;
+  const open = S.open, paused = S.teaBreak;
+  const outages = ['claude', 'codex'].map((e) => ({ e, name: e === 'claude' ? 'Claude' : 'Codex', who: e === 'claude' ? 'Mira, Bolt and Pixel' : 'Bugsy', auth: S.authFail?.[e], until: S.limits?.[e] > Date.now() ? S.limits[e] : null })).filter((o) => o.auth || o.until);
+  for (const e of ['claude', 'codex']) {
+    const o = outages.find((x) => x.e === e), chip = $(e + 'Chip');
+    chip.hidden = !o;
+    if (o) { chip.className = 'chip ' + (o.auth ? 'auth' : 'outage'); chip.textContent = o.auth ? `🔑 ${o.name} login needed · ${o.who} waiting` : `🔋 ${o.name} limit · back ${hhmm(o.until)} (in ${left(o.until)})`; }
+  }
+  $('resumeBtn').hidden = !outages.length;
+  $('resumeBtn').textContent = outages.some((o) => o.auth) ? '🔑 Retry now' : 'Resume now';
+  $('reader').classList.toggle('fail', outages.some((o) => o.auth));
+  drawOutage(outages);
   $('teaBtn').textContent = S.teaBreak ? '▶ Back to work' : '☕ Team tea break';
   $('workChip').textContent = `👥 Working ${S.jobs.filter((j) => j.role).length}/${S.maxAgents}`;
   const fp = S.projects.find((x) => x.id === S.focus);
@@ -464,14 +512,13 @@ function hud() {
   $('closedMsg').setAttribute('opacity', open ? 0 : 1);
   $('closedSub').textContent = wh ? `The team went home. Back at ${wh.start}${wh.weekdaysOnly ? ' (Mon–Fri)' : ''}.` : '';
   $('pauseChip').hidden = !paused;
-  $('resumeBtn').hidden = !limited;
-  if (paused) { $('pauseChip').className = 'chip pause'; $('pauseChip').textContent = S.teaBreak ? `☕ Team tea break${S.busy ? ' · stopping agents…' : ' · all agents paused'}` : `☕ Tea break: usage limit reached · back at ${hhmm(S.pausedUntil)} (in ${left(S.pausedUntil)})`; }
+  if (paused) { $('pauseChip').className = 'chip pause'; $('pauseChip').textContent = `☕ Team tea break${S.busy ? ' · stopping agents…' : ' · all agents paused'}`; }
 
   $('team').replaceChildren(...TEAM.map((t) => {
     const act = activeFor(t.role), isActive = !!act;
     const mins = isActive ? Math.max(0, Math.round((Date.now() - Date.parse(act.startedAt)) / 60000)) : 0;
     const doing = isActive ? `${t.role === 'qa' ? 'testing' : t.role === 'pm-ba' ? 'planning' : 'coding'} ${act.label} in ${act.project} (${mins} min)${S.breaks[t.role] ? ' · break after this step' : ''}`
-      : !open ? 'gone home 🏠' : S.breaks[t.role] ? 'on a break ☕ (click to call back)' : S.teaBreak ? 'on tea break ☕ until you press Back to work' : paused ? `tea break ☕ until the usage limit resets (${hhmm(S.pausedUntil)})`
+      : !open ? 'gone home 🏠' : S.breaks[t.role] ? 'on a break ☕ (click to call back)' : holdOf(t.role) === 'auth' ? `waiting at the door 🔑: ${t.engine} login/subscription problem` : holdOf(t.role) === 'limit' ? `recharging 🔋 until the ${t.engine} limit resets (${hhmm(S.limits[engineOf(t.role)])})` : S.teaBreak ? 'on tea break ☕ until you press Back to work'
       : t.role === 'pm-ba' && S.projects.some((p) => p.decisions.some((d) => !d.answer)) ? 'waiting for your decisions at the whiteboard ⚑'
       : (pos[t.role]?.said ?? 'idle').replace(/^\S+\s/, '').toLowerCase();
     const row = document.createElement('div'); row.className = 'who';
@@ -504,6 +551,23 @@ function ctxBar(c) {
   const bar = document.createElement('div'); bar.style.cssText = 'height:6px;border-radius:3px;background:var(--line);margin:3px 0;max-width:220px;overflow:hidden';
   const fill = document.createElement('div'); fill.style.cssText = `height:100%;width:${c.pct}%;background:${c.pct >= S.handoffAt - 10 ? 'var(--warn)' : 'var(--accent)'}`;
   bar.append(fill); wrap.append(bar, document.createTextNode('🧠 ' + ctxText(c))); return wrap;
+}
+
+// Big battery (usage limit) or lock (login problem) over the whiteboard, one per affected engine.
+function drawOutage(outages) {
+  const g = $('outage');
+  g.setAttribute('opacity', outages.length ? 1 : 0);
+  if (!outages.length) { g.innerHTML = ''; return; }
+  const w = 400 / outages.length;
+  g.innerHTML = '<rect width="400" height="186" rx="12" fill="#fff" stroke="#8d99ae" stroke-width="7"/>' + outages.map((o, i) => {
+    const cx = w * i + w / 2;
+    const title = o.auth ? `${o.name}: login needed` : `${o.name} recharging`;
+    const sub = o.auth ? (o.e === 'claude' ? 'Run claude, then /login' : 'Run: codex login') : `back ${hhmm(o.until)} · in ${left(o.until)}`;
+    const art = o.auth
+      ? `<g transform="translate(${cx - 30},34)"><path d="M14 30v-12a16 16 0 0 1 32 0v12" fill="none" stroke="#c92a2a" stroke-width="7"/><rect x="2" y="28" width="56" height="44" rx="8" fill="#c92a2a"/><circle cx="30" cy="48" r="6" fill="#fff"/><rect x="27" y="50" width="6" height="12" rx="2" fill="#fff"/></g>`
+      : `<g transform="translate(${cx - 70},40)"><rect width="128" height="64" rx="12" fill="#fff" stroke="#2b2d42" stroke-width="5"/><rect x="128" y="20" width="10" height="24" rx="3" fill="#2b2d42"/><rect class="charge" x="7" y="7" width="114" height="50" rx="7" fill="#40c057"/><text class="bolt" x="64" y="44" text-anchor="middle" font-size="30">⚡</text></g>`;
+    return `${art}<text x="${cx}" y="140" text-anchor="middle" font-size="16" font-weight="800" fill="#2b2d42">${title}</text><text x="${cx}" y="164" text-anchor="middle" font-size="13" fill="#868e96">${sub}</text>`;
+  }).join('');
 }
 
 let formLoaded = false;

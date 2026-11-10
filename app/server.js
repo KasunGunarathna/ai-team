@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { spawn, execFile, execFileSync } from 'node:child_process';
-import { TASK_ID, isOpen, limitUntil, parseVerdict, nextTask, readyTasks, normaliseTasks, normaliseQuestions, secretFiles, formatClaudeEvent, formatCodexEvent, sumUsage, permissionRule, clip } from './lib.js';
+import { TASK_ID, authFailure, isOpen, limitUntil, parseVerdict, nextTask, readyTasks, normaliseTasks, normaliseQuestions, secretFiles, formatClaudeEvent, formatCodexEvent, sumUsage, permissionRule, clip } from './lib.js';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
 const DATA = process.env.AI_TEAM_DATA || path.join(ROOT, 'data');
@@ -19,6 +19,7 @@ const MAX_AGENTS = Math.max(1, Number(process.env.MAX_AGENTS || 2)); // agents w
 const WT = path.join(DATA, 'worktrees'); // one git worktree per running task
 const HANDOFF_AT = Number(process.env.CONTEXT_HANDOFF_AT || 80); // % of context: hand a developer's work to a fresh session
 const MAX_HANDOFFS = 3; // per task attempt, so a task cannot loop forever
+const AUTH_RETRY_MS = 15 * 60_000; // after a login/subscription failure, try that engine again every 15 minutes
 const NICK = { 'pm-ba': 'Mira', 'backend-dev': 'Bolt', 'frontend-dev': 'Pixel', qa: 'Bugsy' };
 
 const PM_TOOLS = ['Read', 'Write', 'Edit', 'Glob', 'Grep'];
@@ -32,6 +33,14 @@ fs.mkdirSync(path.join(DATA, 'logs'), { recursive: true });
 const state = fs.existsSync(STATE_FILE) ? JSON.parse(fs.readFileSync(STATE_FILE, 'utf8')) : { projects: [] };
 state.breaks ??= {}; // role -> true while that agent is on a break
 state.contextWindows ??= {}; // model -> context window size learned from earlier runs
+// Per engine: usage-limit pauses (until ms) and login/subscription failures ({ reason, at, retryAt }).
+state.limits ??= {};
+state.authFail ??= {};
+if (state.pausedUntil) { state.limits = { claude: state.pausedUntil, codex: state.pausedUntil }; delete state.pausedUntil; }
+const engineOf = (role) => (role === 'qa' ? 'codex' : 'claude');
+const ENGINE_NAME = { claude: 'Claude', codex: 'Codex' };
+const engineHold = (engine) => state.authFail[engine] ? `${ENGINE_NAME[engine]} login/subscription problem`
+  : state.limits[engine] > Date.now() ? `Waiting for the ${ENGINE_NAME[engine]} usage limit to reset (${new Date(state.limits[engine]).toLocaleTimeString()})` : null;
 // Migrate older state and put work interrupted by a crash back where it can be retried.
 for (const p of state.projects) {
   p.decisions ??= [];
@@ -59,7 +68,7 @@ const roleBusy = {}; // role -> job id currently using that agent
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const projectJobs = (p) => [...jobs.values()].filter((j) => j.projectId === p.id);
 const busyText = () => [...jobs.values()].map((j) => j.label).join(' · ') || null;
-const roleFree = (role) => !roleBusy[role] && !state.breaks[role] && ![...jobs.values()].some((j) => j.needs === role);
+const roleFree = (role) => !roleBusy[role] && !state.breaks[role] && !engineHold(engineOf(role)) && ![...jobs.values()].some((j) => j.needs === role);
 
 // ---------- helpers ----------
 const git = (cwd, ...args) => execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
@@ -82,7 +91,7 @@ function killTree(child) {
 // Spawn an agent CLI that prints JSON lines; write a readable log as events arrive.
 function run(cmd, args, cwd, logFile, format, tag, job, onEvent) {
   return new Promise((resolve) => {
-    const acc = { usage: null, text: '', denials: [] };
+    const acc = { usage: null, text: '', denials: [], stderr: '' };
     const log = fs.createWriteStream(logFile, { flags: 'a' });
     const writeLine = (line) => {
       if (!line.trim()) return;
@@ -101,7 +110,7 @@ function run(cmd, args, cwd, logFile, format, tag, job, onEvent) {
       buf += d;
       for (let i; (i = buf.indexOf('\n')) >= 0; buf = buf.slice(i + 1)) writeLine(buf.slice(0, i));
     });
-    child.stderr.on('data', (d) => { log.write(d); if (SHOW_AGENT) process.stderr.write(`          ${tag} [stderr] ${clip(String(d), 220)}\n`); });
+    child.stderr.on('data', (d) => { log.write(d); acc.stderr = (acc.stderr + d).slice(-2000); if (SHOW_AGENT) process.stderr.write(`          ${tag} [stderr] ${clip(String(d), 220)}\n`); });
     child.on('error', (e) => log.write(`\n[spawn error] ${e.message}\n`));
     child.on('close', (code) => {
       clearTimeout(timer);
@@ -150,11 +159,14 @@ async function agentRun(p, owner, label, engine, args, job, cwd = p.path, handof
   Object.assign(job, { role: null, needs: null, agentLabel: null });
   delete roleBusy[role];
   const limited = job.stopped || job.paused ? null : limitUntil(r, r.code);
+  const authFail = job.stopped || job.paused || limited || handedOff ? null : authFailure(r, r.code);
   if (r.rate?.unifiedWindows) state.claudeUsage = { fiveHour: r.rate.unifiedWindows.five_hour, sevenDay: r.rate.unifiedWindows.seven_day, at: now() };
-  Object.assign(rec, { status: job.stopped ? 'stopped' : job.paused ? 'paused' : handedOff ? 'handoff' : limited ? 'limited' : r.code === 0 ? 'ok' : 'error', exit: r.code, durationMs: Date.now() - t0, usage: r.usage });
+  Object.assign(rec, { status: job.stopped ? 'stopped' : job.paused ? 'paused' : handedOff ? 'handoff' : limited ? 'limited' : authFail ? 'auth' : r.code === 0 ? 'ok' : 'error', exit: r.code, durationMs: Date.now() - t0, usage: r.usage });
   say(`■ [${p.name}] ${label} ${rec.status} (exit ${r.code}) in ${Math.round(rec.durationMs / 1000)}s · ${tok(r.usage)}`);
   save();
-  return { ...r, limited: handedOff ? null : limited, handedOff, logPath: path.join(dir, log) };
+  if (limited) pauseForLimit(limited, engine, label);
+  if (authFail) failAuth(engine, authFail, label);
+  return { ...r, limited: handedOff ? null : limited, authFail, handedOff, logPath: path.join(dir, log) };
 }
 
 // Agent config files: a change here could grant tools or hooks to the next agent run, so agents may not touch them.
@@ -366,10 +378,9 @@ async function plan(p, job) {
   }
   if (!r) { Object.assign(p, before); if (p.status === 'AWAITING_APPROVAL') addPlanDecision(p); return; }
   raiseDenials(p, r.denials, 'PM/BA');
-  if (r.limited) {
-    Object.assign(p, before, { resumePlan: true, error: `Planning paused: usage limit reached. It restarts automatically after ${new Date(r.limited).toLocaleTimeString()}.` });
+  if (r.limited || r.authFail) {
+    Object.assign(p, before, { resumePlan: true, error: r.limited ? `Planning paused: Claude usage limit reached. It restarts automatically after ${new Date(r.limited).toLocaleTimeString()}.` : 'Planning paused: Claude login/subscription problem. It restarts when Claude works again.' });
     if (p.status === 'AWAITING_APPROVAL') addPlanDecision(p);
-    pauseForLimit(r.limited, `${p.name} PM/BA`);
     return;
   }
   if (job.stopped) {
@@ -420,9 +431,15 @@ function appendToTask(p, t, wt, heading, text) {
 }
 
 // Usage limit hit: pause all agent work until the reset time, then the scheduler continues by itself.
-function pauseForLimit(until, who) {
-  state.pausedUntil = Math.max(state.pausedUntil || 0, until);
-  say(`⏸ usage limit reached (${who}). Pausing until ${new Date(state.pausedUntil).toLocaleString()}, then continuing automatically.`);
+function pauseForLimit(until, engine, who) {
+  state.limits[engine] = Math.max(state.limits[engine] || 0, until);
+  say(`🔋 ${ENGINE_NAME[engine]} usage limit reached (${who}). ${ENGINE_NAME[engine]} agents pause until ${new Date(state.limits[engine]).toLocaleString()}, then continue automatically; the others keep working.`);
+  save();
+}
+
+function failAuth(engine, reason, who) {
+  state.authFail[engine] = { reason, at: now(), retryAt: Date.now() + AUTH_RETRY_MS };
+  say(`🔑 ${ENGINE_NAME[engine]} login/subscription problem (${who}): ${reason.replace(/\.+$/, '')}. ${ENGINE_NAME[engine]} agents pause; retrying every 15 min, or press Retry now after logging in.`);
   save();
 }
 
@@ -439,8 +456,7 @@ async function runTask(p, t, job) {
   };
   const holdFor = (role) => state.teaBreak ? 'Paused for the team tea break'
     : state.breaks[role] ? `Waiting: ${NICK[role]} is on a break`
-    : state.pausedUntil > Date.now() ? `Waiting for usage limit reset (${new Date(state.pausedUntil).toLocaleTimeString()})` : null;
-  const limitedAt = (stage, until) => { pauseForLimit(until, `${t.id} ${stage}`); return park(stage, `Waiting for usage limit reset (${new Date(until).toLocaleTimeString()})`); };
+    : engineHold(engineOf(role));
 
   let handoffs = 0;
   for (let cycle = t.cycles || 0; cycle <= MAX_FIX_CYCLES; cycle++) {
@@ -463,7 +479,7 @@ async function runTask(p, t, job) {
       if (job.paused) { t.interrupted = true; return park('DEV', 'Paused for the team tea break'); }
       if (!dev || job.stopped) return block(p, t, 'Stopped by you during development.');
       raiseDenials(p, dev.denials, `${t.id} (${t.owner})`);
-      if (dev.limited) return limitedAt('DEV', dev.limited);
+      if (dev.limited || dev.authFail) return park('DEV', engineHold('claude') ?? 'Waiting for Claude');
       if (dev.handedOff) {
         if (++handoffs > MAX_HANDOFFS) return block(p, t, `The developer filled its context ${MAX_HANDOFFS + 1} times in one attempt. The task is probably too big: split it, or retry with narrower instructions.`);
         t.handoff = clip(`What it said last:\n${(dev.notes ?? []).join('\n---\n')}\n\nFiles changed so far (git status):\n${git(wt, 'status', '--short') || '(none)'}`, 6000);
@@ -484,7 +500,7 @@ async function runTask(p, t, job) {
     const qa = await agentRun(p, t, `${t.id}-qa-${cycle}`, 'codex', ['exec', '--json', '--ignore-rules', '-C', wt, '-s', 'workspace-write', '-o', reportFile, qaPrompt], job, wt);
     if (job.paused) return park('QA', 'Paused for the team tea break (QA restarts)');
     if (!qa || job.stopped) return block(p, t, 'Stopped by you during QA.');
-    if (qa.limited) return limitedAt('QA', qa.limited);
+    if (qa.limited || qa.authFail) return park('QA', engineHold('codex') ?? 'Waiting for Codex');
     const report = fs.existsSync(reportFile) ? fs.readFileSync(reportFile, 'utf8') : '';
     fs.appendFileSync(qa.logPath, `\n===== QA report =====\n${report || '(none)'}\n`);
     const verdict = parseVerdict(report);
@@ -550,10 +566,9 @@ function tick() {
   const open = isOpen(state.workHours);
   if (open !== wasOpen) { wasOpen = open; say(open ? '🏢 office open, the team is back at work' : `🌙 office closed, queued work waits until ${state.workHours.start}`); }
   if (!open || state.teaBreak) return;
-  if (state.pausedUntil) {
-    if (Date.now() < state.pausedUntil) return;
-    state.pausedUntil = null; save();
-    say('▶ usage limit window reset, continuing');
+  for (const engine of ['claude', 'codex']) {
+    if (state.limits[engine] && Date.now() >= state.limits[engine]) { delete state.limits[engine]; save(); say(`🔋 ${ENGINE_NAME[engine]} usage limit reset: back to work`); }
+    if (state.authFail[engine] && Date.now() >= state.authFail[engine].retryAt) { delete state.authFail[engine]; save(); say(`🔑 trying ${ENGINE_NAME[engine]} again`); }
   }
   while (jobs.size < MAX_AGENTS && startNext());
 }
@@ -606,7 +621,7 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'GET' && url.pathname === '/api/state') return send(res, 200, { busy: busyText(), busyProjects: [...new Set([...jobs.values()].map((j) => j.projectId))], maxAgents: MAX_AGENTS, focus: state.focus || null, breaks: state.breaks,
       jobs: [...jobs.values()].map(({ id, kind, projectId, project, taskId, label, role, agentLabel, agentStartedAt, needs, context }) => ({ id, kind, projectId, project, taskId, label, role, agentLabel, agentStartedAt, needs, context })),
       handoffAt: HANDOFF_AT,
-      teaBreak: !!state.teaBreak, workHours: state.workHours || null, open: isOpen(state.workHours), pausedUntil: state.pausedUntil || null, claudeUsage: state.claudeUsage || null, dailyAt: DAILY_AT, dailyTasks: DAILY_TASKS, projects: state.projects.map(view) });
+      teaBreak: !!state.teaBreak, workHours: state.workHours || null, open: isOpen(state.workHours), limits: state.limits, authFail: state.authFail, claudeUsage: state.claudeUsage || null, dailyAt: DAILY_AT, dailyTasks: DAILY_TASKS, projects: state.projects.map(view) });
 
     if (req.method === 'GET' && parts[1] === 'log') {
       const [pid, file] = [url.searchParams.get('project'), url.searchParams.get('file')];
@@ -641,7 +656,7 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (req.method === 'POST' && url.pathname === '/api/resume') {
-      state.pausedUntil = null; save();
+      state.limits = {}; state.authFail = {}; save();
       say('▶ resumed by you');
       kick();
       return send(res, 200, { ok: true });

@@ -24,6 +24,7 @@
     done: () => [523, 659, 784, 1047].forEach((f, i) => tone(f, i * 0.09, 0.3)), // happy arpeggio: task DONE
     blocked: () => { tone(247, 0, 0.25, 'sawtooth', 0.07); tone(196, 0.24, 0.4, 'sawtooth', 0.07); }, // low "uh-oh": task blocked
     approval: () => { tone(880, 0, 0.4, 'sine', 0.22); tone(659, 0.32, 0.6, 'sine', 0.22); }, // ding-dong: decision needed
+    outage: () => [880, 660, 440, 260].forEach((f, i) => tone(f, i * 0.12, 0.22, 'square', 0.06)), // power-down: limit or login problem
     reminder: () => [0, 0.22, 0.44].forEach((at) => tone(988, at, 0.14, 'sine', 0.12)), // soft triple beep: still waiting
   };
 
@@ -34,6 +35,7 @@
     done: new Set(S.projects.flatMap((p) => p.tasks.filter((t) => t.status === 'DONE').map((t) => `${p.id}/${t.id}`))),
     blocked: new Set(S.projects.flatMap((p) => p.tasks.filter((t) => t.status === 'BLOCKED').map((t) => `${p.id}/${t.id}`))),
     pending: new Set(S.projects.flatMap((p) => p.decisions.filter((d) => !d.answer).map((d) => d.id))),
+    outages: new Set(['claude', 'codex'].flatMap((e) => [S.authFail?.[e] && `${e}:auth`, S.limits?.[e] > Date.now() && `${e}:limit`]).filter(Boolean)),
   });
 
   // Call with every fresh /api/state. Plays a sound for each kind of new event since the last call.
@@ -41,8 +43,8 @@
     const cur = keys(S);
     if (prev) {
       const isNew = (k) => [...cur[k]].some((x) => !prev[k].has(x));
-      const events = ['pending', 'blocked', 'done', 'runs'].filter(isNew)
-        .map((k) => ({ pending: 'approval', blocked: 'blocked', done: 'done', runs: 'start' })[k]);
+      const events = ['outages', 'pending', 'blocked', 'done', 'runs'].filter(isNew)
+        .map((k) => ({ outages: 'outage', pending: 'approval', blocked: 'blocked', done: 'done', runs: 'start' })[k]);
       events.forEach((name, i) => setTimeout(() => play(name), i * GAP_MS));
       if (events.includes('approval')) lastAlert = Date.now();
     } else {

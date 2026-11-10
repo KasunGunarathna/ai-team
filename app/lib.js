@@ -172,3 +172,17 @@ export function isOpen(hours, d = new Date()) {
   const m = d.getHours() * 60 + d.getMinutes(), s = mins(hours.start), e = mins(hours.end);
   return s <= e ? m >= s && m < e : m >= s || m < e;
 }
+
+// ---------- login / subscription failures ----------
+const AUTH_TEXT = /invalid api key|please run \/login|not logged in|log ?in (is )?required|authentication[_ ]error|unauthori[sz]ed|oauth token (has )?expired|token (has )?expired|credit balance is too low|subscription (has )?(expired|inactive|required)|not included in your plan|plan does not include|payment required|billing/i;
+
+// When a failed agent run looks like a login or subscription problem, return a short reason; otherwise null.
+// Only failed runs are checked, so a task *about* authentication is not a false alarm.
+export function authFailure(r, code) {
+  const failed = code !== 0 || r.isError || r.errorText;
+  if (!failed) return null;
+  if (r.apiStatus === 401 || r.apiStatus === 403 || r.apiStatus === 402) return `HTTP ${r.apiStatus} from the service`;
+  const text = `${r.errorText ?? ''} ${r.isError ? r.text ?? '' : ''} ${r.stderr ?? ''}`;
+  const m = text.match(AUTH_TEXT);
+  return m ? clip(text.slice(Math.max(0, m.index - 60), m.index + 140), 200) : null;
+}
