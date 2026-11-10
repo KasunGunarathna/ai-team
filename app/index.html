@@ -88,8 +88,8 @@
 
 <script src="/sounds.js"></script>
 <script>
-const COLS = [['BACKLOG','Backlog'],['READY','Ready'],['IN_PROGRESS','Dev'],['QA','QA'],['DONE','Done'],['BLOCKED','Blocked']];
-const NOTE_HINT = { plan: 'Notes for PM/BA (used when you choose Re-plan)', question: 'Optional note (required for "Other")', permission: 'Optional note', blocked: 'Optional instructions for the developer agent on the retry' };
+const COLS = [['BACKLOG','Backlog'],['READY','Ready'],['DESIGN','Design'],['IN_PROGRESS','Dev'],['QA','QA'],['DONE','Done'],['BLOCKED','Blocked']];
+const NOTE_HINT = { design: 'What should Iris (UI/UX) change? Required for Request changes', plan: 'Notes for PM/BA (used when you choose Re-plan)', question: 'Optional note (required for "Other")', permission: 'Optional note', blocked: 'Optional instructions for the developer agent on the retry' };
 let S = { projects: [] }, openLog = null, actError = '';
 let sel = null, tab = 'idea'; try { sel = localStorage.getItem('sel'); tab = localStorage.getItem('tab') || 'idea'; } catch {}
 const kindOf = (p) => p.kind || 'idea';
@@ -204,6 +204,7 @@ function decisionNode(p, d) {
       catch (x) { err.textContent = x.message; }
     } },
     el('div', { className: 'row' }, el('span', { className: 'pill', textContent: d.kind }), el('b', { textContent: d.question })),
+    d.kind === 'design' ? el('a', { href: `/design?project=${encodeURIComponent(p.id)}&task=${encodeURIComponent(d.taskId)}`, target: '_blank', rel: 'noopener', textContent: '🎨 Open UI mockup' }) : null,
     d.detail ? el('div', { className: 'detail', textContent: d.detail }) : null,
     ...d.options.map((o, i) => el('label', {}, el('input', { type: 'radio', name, value: o.value, checked: i === 0 && d.kind !== 'blocked' }), el('span', { textContent: o.label }))),
     note, el('div', { className: 'row' }, el('button', { textContent: 'Submit decision' }), err));
@@ -248,11 +249,12 @@ function render() {
     p.runs.length ? runList(p, p.runs) : null,
     p.tasks.length ? el('h3', { textContent: 'Board' }) : null,
     p.tasks.length ? el('div', { className: 'board' }, ...COLS.map(([key, label]) => {
-      const tasks = p.tasks.filter(t => t.status === key || (key === 'IN_PROGRESS' && t.status === 'CHANGES_REQUESTED'));
+      const tasks = p.tasks.filter(t => t.status === key || (key === 'IN_PROGRESS' && t.status === 'CHANGES_REQUESTED') || (key === 'DESIGN' && t.status === 'DESIGN_REVIEW'));
       return el('div', { className: 'col' }, el('h3', { textContent: `${label} (${tasks.length})` }), ...tasks.map(t =>
         el('div', { className: 'task ' + t.status },
           el('div', {}, el('b', { textContent: t.id }), ' ', el('span', { className: 'pill', textContent: `P${t.phase} · ${t.owner}` })),
           el('div', { textContent: t.title }),
+          t.design ? el('a', { href: `/design?project=${encodeURIComponent(p.id)}&task=${encodeURIComponent(t.id)}`, target: '_blank', rel: 'noopener', style: 'font-size:12px', textContent: `🎨 UI mockup (${t.design.status === 'approved' ? 'approved' : 'waiting for you'})` }) : null,
           t.cycles ? el('div', { className: 'muted', textContent: `fix cycle ${t.cycles}/2` }) : null,
           t.dependsOn.length ? el('div', { className: 'muted', textContent: 'needs ' + t.dependsOn.join(', ') }) : null,
           t.note ? el('div', { className: 'err', style: 'font-size:12px', textContent: t.note.split('\n')[0] }) : null,

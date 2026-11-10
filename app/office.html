@@ -119,7 +119,7 @@
 
 <div class="stage">
 <div id="agentCard" hidden role="dialog" aria-label="Agent"></div>
-<svg id="office" viewBox="0 0 1200 720" role="img" aria-labelledby="officeTitle">
+<svg id="office" viewBox="0 0 1400 720" role="img" aria-labelledby="officeTitle">
   <title id="officeTitle">Cartoon office where the AI agents work. Live status is listed below the picture.</title>
   <defs>
     <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1"><stop id="sky1" offset="0" stop-color="#7cc4f2"/><stop id="sky2" offset="1" stop-color="#d8f0ff"/></linearGradient>
@@ -132,9 +132,9 @@
   </defs>
 
   <!-- room -->
-  <rect width="1200" height="256" fill="url(#wallp)"/>
-  <rect y="246" width="1200" height="14" fill="#c8a173"/>
-  <rect y="260" width="1200" height="460" fill="url(#planks)"/>
+  <rect width="1400" height="256" fill="url(#wallp)"/>
+  <rect y="246" width="1400" height="14" fill="#c8a173"/>
+  <rect y="260" width="1400" height="460" fill="url(#planks)"/>
   <ellipse cx="300" cy="640" rx="200" ry="58" fill="#e8916f" opacity=".35"/>
   <ellipse cx="760" cy="652" rx="190" ry="52" fill="#7fb7a4" opacity=".25"/>
 
@@ -169,6 +169,23 @@
   <g transform="translate(830,132)">
     <rect id="signbg" width="100" height="40" rx="9" fill="#2f9e44"/>
     <text id="signtx" x="50" y="26" text-anchor="middle" font-size="15" font-weight="800" fill="#fff">OPEN</text>
+  </g>
+
+  <!-- design studio: Iris (UI/UX) -->
+  <g transform="translate(1210,40)">
+    <rect width="176" height="44" rx="10" fill="#fff0f6" stroke="#e64980" stroke-width="3"/>
+    <text x="88" y="29" text-anchor="middle" font-size="17" font-weight="800" fill="#a61e4d">🎨 Design studio</text>
+  </g>
+  <g transform="translate(1214,100)">
+    <rect width="168" height="112" rx="8" fill="#fff" stroke="#adb5bd" stroke-width="3"/>
+    <rect x="12" y="12" width="144" height="16" rx="4" fill="#e64980" opacity=".8"/>
+    <rect x="12" y="36" width="64" height="62" rx="6" fill="#ffe3e3"/><rect x="84" y="36" width="72" height="12" rx="4" fill="#dee2e6"/>
+    <rect x="84" y="54" width="56" height="12" rx="4" fill="#dee2e6"/><rect x="84" y="76" width="44" height="18" rx="9" fill="#7950f2"/>
+  </g>
+  <g transform="translate(1330,470)">
+    <path d="M-34 110 L0 0 L34 110 M0 0 L0 116" stroke="#8b5e34" stroke-width="6" fill="none" stroke-linecap="round"/>
+    <rect x="-46" y="10" width="92" height="66" rx="4" fill="#fff" stroke="#8b5e34" stroke-width="4"/>
+    <circle cx="-20" cy="34" r="10" fill="#ffd43b"/><rect x="-4" y="26" width="38" height="8" rx="3" fill="#74c0fc"/><rect x="-4" y="42" width="28" height="8" rx="3" fill="#f783ac"/><rect x="-34" y="56" width="68" height="10" rx="5" fill="#63e6be"/>
   </g>
 
   <!-- lounge (behind people) -->
@@ -209,8 +226,8 @@
   <g id="agents"></g>
   <g id="front"></g>
 
-  <rect id="nightveil" width="1200" height="720" fill="#0b1026" opacity="0"/>
-  <g id="closedMsg" opacity="0" style="transition:opacity 1s">
+  <rect id="nightveil" width="1400" height="720" fill="#0b1026" opacity="0"/>
+  <g id="closedMsg" opacity="0" style="transition:opacity 1s" transform="translate(100,0)">
     <rect x="390" y="300" width="420" height="110" rx="20" fill="#fff" opacity=".95"/>
     <text x="600" y="345" text-anchor="middle" font-size="24" font-weight="800" fill="#2b2d42">🌙 Office closed</text>
     <text id="closedSub" x="600" y="380" text-anchor="middle" font-size="16" fill="#555"></text>
@@ -251,8 +268,9 @@ const TEAM = [
   { role: 'backend-dev', name: 'Bolt', title: 'Backend dev', engine: 'Claude', shirt: '#1c7ed6', hair: '#212529', skin: '#b9784f', style: 'phones' },
   { role: 'frontend-dev', name: 'Pixel', title: 'Frontend dev', engine: 'Claude', shirt: '#e64980', hair: '#f59f00', skin: '#ffe0bd', style: 'long' },
   { role: 'qa', name: 'Bugsy', title: 'QA engineer', engine: 'Codex', shirt: '#0ca678', hair: '#7a4a2a', skin: '#d9a066', style: 'glasses' },
+  { role: 'ui-ux', name: 'Iris', title: 'UI/UX designer', engine: 'Codex', shirt: '#f76707', hair: '#862e9c', skin: '#f1c27d', style: 'beret' },
 ];
-const DESK_X = { 'pm-ba': 190, 'backend-dev': 450, 'frontend-dev': 710, 'qa': 970 };
+const DESK_X = { 'pm-ba': 190, 'backend-dev': 450, 'frontend-dev': 710, 'qa': 970, 'ui-ux': 1260 };
 const SEAT_Y = 372;
 const SPOTS = [
   { id: 'cooler', x: 120, y: 566, say: ['💧 Water cooler chat', '💧 Staying hydrated'] },
@@ -268,7 +286,7 @@ const TEA = ['coffee', 'fridge', 'cooler', 'plant']; // tea-break spots during a
 const BOARD_SPOT = { x: 580, y: 262 };
 const CHARGE = ['sofa1', 'sofa2', 'pongL', 'pongR']; // usage limit: recharge in the lounge
 const DOOR = [{ id: 'door1', x: 290, y: 268 }, { id: 'door2', x: 372, y: 282, lift: 40 }]; // login problem: waiting at the door
-const engineOf = (role) => (role === 'qa' ? 'codex' : 'claude');
+const engineOf = (role) => (role === 'qa' || role === 'ui-ux' ? 'codex' : 'claude');
 const holdOf = (role) => { const e = engineOf(role); return S.authFail?.[e] ? 'auth' : S.limits?.[e] > Date.now() ? 'limit' : null; };
 const $ = (id) => document.getElementById(id);
 const NS = 'http://www.w3.org/2000/svg';
@@ -324,6 +342,7 @@ function hairFor(t) {
   switch (t.style) {
     case 'bun': return cap + `<circle cx="0" cy="-50" r="11" fill="${t.hair}"/>`;
     case 'phones': return cap + `<path d="M-25 -20 A25 25 0 0 1 25 -20" stroke="#212529" stroke-width="5" fill="none"/><rect x="-30" y="-26" width="10" height="16" rx="4" fill="#e03131"/><rect x="20" y="-26" width="10" height="16" rx="4" fill="#e03131"/>`;
+    case 'beret': return cap + `<ellipse cx="5" cy="-45" rx="23" ry="9" fill="#e03131"/><circle cx="6" cy="-55" r="3.5" fill="#e03131"/>`;
     case 'long': return `<path d="M-25 -20 Q-28 18 -14 20 L-16 -20Z M25 -20 Q28 18 14 20 L16 -20Z" fill="${t.hair}"/>` + cap;
     default: return cap;
   }
@@ -435,7 +454,7 @@ function update() {
     if (isActive) {
       place(t, DESK_X[t.role], SEAT_Y, 'desk', first);
       const id = act.label.replace(/-(dev|qa)-\d+$/, '');
-      const verb = t.role === 'qa' ? '🔍 Testing' : t.role === 'pm-ba' ? '📝 Planning' : '⌨️ Coding';
+      const verb = t.role === 'qa' ? '🔍 Testing' : t.role === 'pm-ba' ? '📝 Planning' : t.role === 'ui-ux' ? '🎨 Designing' : '⌨️ Coding';
       speak(t, t.role === 'pm-ba' ? `${verb} ${clip(act.project, 22)}` : `${verb} ${id}${taskTitle(act) ? ' · ' + clip(taskTitle(act), 22) : ''}`);
     } else if (!S.open) {
       speak(t, '');
@@ -499,7 +518,7 @@ function scenery() {
 
 function hud() {
   const open = S.open, paused = S.teaBreak;
-  const outages = ['claude', 'codex'].map((e) => ({ e, name: e === 'claude' ? 'Claude' : 'Codex', who: e === 'claude' ? 'Mira, Bolt and Pixel' : 'Bugsy', auth: S.authFail?.[e], until: S.limits?.[e] > Date.now() ? S.limits[e] : null })).filter((o) => o.auth || o.until);
+  const outages = ['claude', 'codex'].map((e) => ({ e, name: e === 'claude' ? 'Claude' : 'Codex', who: e === 'claude' ? 'Mira, Bolt and Pixel' : 'Bugsy and Iris', auth: S.authFail?.[e], until: S.limits?.[e] > Date.now() ? S.limits[e] : null })).filter((o) => o.auth || o.until);
   for (const e of ['claude', 'codex']) {
     const o = outages.find((x) => x.e === e), chip = $(e + 'Chip');
     chip.hidden = !o;
@@ -528,7 +547,7 @@ function hud() {
   $('team').replaceChildren(...TEAM.map((t) => {
     const act = activeFor(t.role), isActive = !!act;
     const mins = isActive ? Math.max(0, Math.round((Date.now() - Date.parse(act.startedAt)) / 60000)) : 0;
-    const doing = isActive ? `${t.role === 'qa' ? 'testing' : t.role === 'pm-ba' ? 'planning' : 'coding'} ${act.label} in ${act.project} (${mins} min)${S.breaks[t.role] ? ' · break after this step' : ''}`
+    const doing = isActive ? `${t.role === 'qa' ? 'testing' : t.role === 'pm-ba' ? 'planning' : t.role === 'ui-ux' ? 'designing the UI for' : 'coding'} ${act.label} in ${act.project} (${mins} min)${S.breaks[t.role] ? ' · break after this step' : ''}`
       : !open ? 'gone home 🏠' : S.breaks[t.role] ? 'on a break ☕ (click to call back)' : holdOf(t.role) === 'auth' ? `waiting at the door 🔑: ${t.engine} login/subscription problem` : holdOf(t.role) === 'limit' ? `recharging 🔋 until the ${t.engine} limit resets (${hhmm(S.limits[engineOf(t.role)])})` : S.teaBreak ? 'on tea break ☕ until you press Back to work'
       : t.role === 'pm-ba' && S.projects.some((p) => p.decisions.some((d) => !d.answer)) ? 'waiting for your decisions at the whiteboard ⚑'
       : (pos[t.role]?.said ?? 'idle').replace(/^\S+\s/, '').toLowerCase();
@@ -584,7 +603,7 @@ function drawOutage(outages) {
 function drawUsage() {
   const fmtTok = (n) => (n >= 1e6 ? (n / 1e6).toFixed(1) + 'M' : n >= 1e3 ? Math.round(n / 1e3) + 'k' : String(n));
   const when = (ms) => new Date(ms).toLocaleString([], { weekday: 'short', hour: '2-digit', minute: '2-digit' });
-  for (const [key, name, who] of [['claude', 'Claude', 'Mira · Bolt · Pixel'], ['codex', 'Codex', 'Bugsy']]) {
+  for (const [key, name, who] of [['claude', 'Claude', 'Mira · Bolt · Pixel'], ['codex', 'Codex', 'Bugsy · Iris']]) {
     const u = S.weekly?.[key], card = $('u-' + key);
     const left = u?.week ? Math.max(0, 100 - u.week.pct) : null;
     const color = left == null ? 'var(--muted)' : left <= 10 ? 'var(--bad)' : left <= 30 ? 'var(--warn)' : 'var(--ok)';
@@ -623,7 +642,7 @@ $('saveHours').onclick = async () => {
 };
 
 // ---------- decisions (same API and options as the task board) ----------
-const NOTE_HINT = { plan: 'Suggestions for Mira (used if you choose Re-plan)', question: 'Optional note (required for "Other")', permission: 'Optional note', blocked: 'Instructions for the developer on the retry (optional)' };
+const NOTE_HINT = { design: 'What should Iris change? (required for Request changes)', plan: 'Suggestions for Mira (used if you choose Re-plan)', question: 'Optional note (required for "Other")', permission: 'Optional note', blocked: 'Instructions for the developer on the retry (optional)' };
 const decisionForms = new Map(); // keep half-filled forms across refreshes
 function showDecisions() { $('decisionsCard').scrollIntoView({ behavior: 'smooth', block: 'start' }); }
 function decisionForm(p, d) {
@@ -633,6 +652,7 @@ function decisionForm(p, d) {
   for (const txt of [p.name, d.kind]) { const s = document.createElement('span'); s.className = 'tag'; s.textContent = txt; head.append(s); }
   const q = document.createElement('b'); q.textContent = d.question;
   form.append(head, q);
+  if (d.kind === 'design') { const a = document.createElement('a'); a.href = `/design?project=${encodeURIComponent(p.id)}&task=${encodeURIComponent(d.taskId)}`; a.target = '_blank'; a.rel = 'noopener'; a.className = 'btn'; a.style.cssText = 'display:inline-block;margin:4px 0 8px'; a.textContent = '🎨 Open UI mockup'; form.append(a); }
   if (d.detail) { const det = document.createElement('details'), sum = document.createElement('summary'), pre = document.createElement('pre'); sum.textContent = 'Details'; pre.textContent = d.detail; det.append(sum, pre); form.append(det); }
   d.options.forEach((o, i) => {
     const l = document.createElement('label'), r = document.createElement('input'), span = document.createElement('span');

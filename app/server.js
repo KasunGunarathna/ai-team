@@ -21,7 +21,11 @@ const WT = path.join(DATA, 'worktrees'); // one git worktree per running task
 const HANDOFF_AT = Number(process.env.CONTEXT_HANDOFF_AT || 80); // % of context: hand a developer's work to a fresh session
 const MAX_HANDOFFS = 3; // per task attempt, so a task cannot loop forever
 const AUTH_RETRY_MS = 15 * 60_000; // after a login/subscription failure, try that engine again every 15 minutes
-const NICK = { 'pm-ba': 'Mira', 'backend-dev': 'Bolt', 'frontend-dev': 'Pixel', qa: 'Bugsy' };
+const NICK = { 'pm-ba': 'Mira', 'backend-dev': 'Bolt', 'frontend-dev': 'Pixel', qa: 'Bugsy', 'ui-ux': 'Iris' };
+const DESIGNS = path.join(DATA, 'designs'); // proposed/approved mockups, kept outside worktrees
+// Frontend tasks need an approved UI design (by Iris, the UI/UX agent) before the developer starts.
+const needsDesign = (t) => t.owner === 'frontend-dev' && t.design?.status !== 'approved';
+const designRel = (p, t) => path.join(p.planDir, 'design', t.id);
 
 const PM_TOOLS = ['Read', 'Write', 'Edit', 'Glob', 'Grep'];
 const DEV_TOOLS = [
@@ -38,7 +42,7 @@ state.contextWindows ??= {}; // model -> context window size learned from earlie
 state.limits ??= {};
 state.authFail ??= {};
 if (state.pausedUntil) { state.limits = { claude: state.pausedUntil, codex: state.pausedUntil }; delete state.pausedUntil; }
-const engineOf = (role) => (role === 'qa' ? 'codex' : 'claude');
+const engineOf = (role) => (role === 'qa' || role === 'ui-ux' ? 'codex' : 'claude');
 const ENGINE_NAME = { claude: 'Claude', codex: 'Codex' };
 const engineHold = (engine) => state.authFail[engine] ? `${ENGINE_NAME[engine]} login/subscription problem`
   : state.limits[engine] > Date.now() ? `Waiting for the ${ENGINE_NAME[engine]} usage limit to reset (${new Date(state.limits[engine]).toLocaleTimeString()})` : null;
@@ -56,6 +60,7 @@ for (const p of state.projects) {
     for (const r of o.runs) if (r.status === 'running') r.status = 'interrupted';
   }
   if (p.status === 'PLANNING') p.status = 'NEW';
+  for (const t of p.tasks) if (t.status === 'DESIGN') t.status = 'READY';
   for (const t of p.tasks) if (['IN_PROGRESS', 'QA', 'CHANGES_REQUESTED'].includes(t.status)) t.status = 'READY'; // its worktree is kept and reused
   if (p.status === 'AWAITING_APPROVAL' && !pending(p).some((d) => d.kind === 'plan')) addPlanDecision(p);
 }
@@ -127,8 +132,8 @@ function run(cmd, args, cwd, logFile, format, tag, job, onEvent) {
 // Records each agent run (log file, duration, tokens) on the project or task that owns it.
 // Waits until that agent is free (another job may be using it). Returns null if the job was stopped while waiting.
 // handoffAt (percent): end the session once its context is this full; the caller starts a fresh one with its notes.
-async function agentRun(p, owner, label, engine, args, job, cwd = p.path, handoffAt = null) {
-  const role = engine === 'codex' ? 'qa' : owner === p ? 'pm-ba' : owner.owner;
+async function agentRun(p, owner, label, engine, args, job, cwd = p.path, handoffAt = null, roleName = null) {
+  const role = roleName ?? (engine === 'codex' ? 'qa' : owner === p ? 'pm-ba' : owner.owner);
   job.needs = role;
   while (roleBusy[role] && roleBusy[role] !== job.id) { if (job.stopped || job.paused) { job.needs = null; return null; } await sleep(1500); }
   roleBusy[role] = job.id;
@@ -265,6 +270,13 @@ function applyAnswer(p, d, value, note) {
     return startPlan(p);
   }
   if (d.kind === 'blocked') { retryTask(p, p.tasks.find((x) => x.id === d.taskId), value, note); kick(); }
+  if (d.kind === 'design') {
+    const t = p.tasks.find((x) => x.id === d.taskId);
+    if (value === 'approve') t.design.status = 'approved'; else t.designFeedback = note;
+    t.status = 'READY'; t.note = null;
+    if (!p.auto) p.runBudget = Math.max(p.runBudget, 1);
+    kick();
+  }
 }
 
 // mode: 'continue' keeps the task's worktree, 'restart' throws it away (user chose it explicitly; only this task's work).
@@ -311,6 +323,8 @@ function ensureWorktree(p, t) {
   git(p.path, 'worktree', 'add', '-q', ...(branchExists(p, b) ? [dir, b] : ['-b', b, dir, p.branch]));
   // Ticket plans are git-excluded, so give the task workspace its own copy of the task files.
   if (p.kind === 'ticket') fs.cpSync(path.join(p.path, p.planDir), path.join(dir, p.planDir), { recursive: true });
+  const saved = path.join(DESIGNS, p.id, t.id);
+  if (fs.existsSync(saved)) fs.cpSync(saved, path.join(dir, designRel(p, t)), { recursive: true });
   say(`⎇ [${p.name}] ${t.id} workspace ready: ${dir}`);
   return dir;
 }
@@ -459,6 +473,7 @@ async function runTask(p, t, job) {
     : state.breaks[role] ? `Waiting: ${NICK[role]} is on a break`
     : engineHold(engineOf(role));
 
+  if (needsDesign(t)) return designStep(p, t, job, wt, park, holdFor);
   let handoffs = 0;
   for (let cycle = t.cycles || 0; cycle <= MAX_FIX_CYCLES; cycle++) {
     t.cycles = cycle; t.note = null;
@@ -468,6 +483,7 @@ async function runTask(p, t, job) {
       t.status = 'IN_PROGRESS'; save();
       const devPrompt = `Implement ${t.id}: ${t.title}.\nRead ${p.taskDir}/${t.id}.md for scope, acceptance criteria and test plan.${p.kind === 'ticket' ? ` This is an existing codebase: follow its conventions, keep the change focused on ${p.ticketKey}, and do not break existing tests.` : ''} ` +
         'Install dependencies you need, write the code and tests, run the tests, and fill in the Implementation evidence section of the task file. Do not commit.' +
+        (t.design?.status === 'approved' ? `\n\nThe product owner APPROVED this UI design: ${designRel(p, t)}/mockup.html (notes: ${designRel(p, t)}/NOTES.md). Build the real UI to match it.` : '') +
         productDecisions(p) +
         (t.instructions ? `\n\nInstructions from the product owner for this task:\n${t.instructions}` : '') +
         (feedback ? `\n\nYour previous attempt was not accepted. Fix every point:\n\n${feedback}` : '') +
@@ -497,6 +513,7 @@ async function runTask(p, t, job) {
     const reportFile = path.join(DATA, 'logs', p.id, `${t.id}-qa-${cycle}-${Date.now()}.report.md`);
     const qaPrompt = `${agentBody('qa-engineer')}\n\n---\nTask under test: ${p.taskDir}/${t.id}.md (${t.title}).${p.kind === 'ticket' ? ` Existing codebase: also run the existing test suite to catch regressions.` : ''}\n` +
       'The implementation is the uncommitted change set: inspect it with git status and git diff. Run the real lint, typecheck and test commands. ' +
+      (t.design?.status === 'approved' ? `Also check the UI matches the approved mockup ${designRel(p, t)}/mockup.html. ` : '') +
       'Do not edit application code or tests. End your reply with exactly one line: VERDICT: PASS, VERDICT: FAIL or VERDICT: BLOCKED.';
     const qa = await agentRun(p, t, `${t.id}-qa-${cycle}`, 'codex', ['exec', '--json', '--ignore-rules', '-C', wt, '-s', 'workspace-write', '-o', reportFile, qaPrompt], job, wt);
     if (job.paused) return park('QA', 'Paused for the team tea break (QA restarts)');
@@ -532,6 +549,44 @@ async function runTask(p, t, job) {
   return block(p, t, `QA failed ${MAX_FIX_CYCLES + 1} times. Last report:\n\n${clip(feedback, 1500)}`);
 }
 
+// Iris (Codex) proposes the UI as a static HTML mockup; the product owner approves it or asks for changes.
+async function designStep(p, t, job, wt, park, holdFor) {
+  const hold = holdFor('ui-ux');
+  if (hold) return park('DEV', hold);
+  t.status = 'DESIGN'; t.note = null; save();
+  const rel = designRel(p, t), round = (t.design?.rounds ?? 0) + 1;
+  fs.mkdirSync(path.join(wt, rel), { recursive: true });
+  const prompt = `${agentBody('ui-ux')}\n\n---\nTask: ${p.taskDir}/${t.id}.md (${t.title}). Product context: ${p.kind === 'ticket' ? `${p.planDir}/ANALYSIS.md` : 'docs/PRD.md and docs/ARCHITECTURE.md'} if present.\n` +
+    `Write ${rel}/mockup.html: ONE self-contained static HTML file (inline CSS only; no JavaScript; no external fonts, images, scripts or links) showing the screens and states for this task (main layout, form fields and buttons, empty, loading, error and success states, and a narrow mobile view), with realistic sample content and a caption per state.\n` +
+    `Write ${rel}/NOTES.md: layout and component choices, accessibility (labels, contrast, focus, keyboard order), states, and open UX questions.\n` +
+    'Do not change application code, tests or configuration.' +
+    productDecisions(p) +
+    (t.designFeedback ? `\n\nThe product owner reviewed your previous proposal and asked for these changes (apply them):\n${t.designFeedback}` : '');
+  const reportFile = path.join(DATA, 'logs', p.id, `${t.id}-design-${round}-${Date.now()}.report.md`);
+  const r = await agentRun(p, t, `${t.id}-design-${round}`, 'codex', ['exec', '--json', '--ignore-rules', '-C', wt, '-s', 'workspace-write', '-o', reportFile, prompt], job, wt, null, 'ui-ux');
+  if (job.paused) return park('DEV', 'Paused for the team tea break (design restarts)');
+  if (!r || job.stopped) return block(p, t, 'Stopped by you during UI design.');
+  if (r.limited || r.authFail) return park('DEV', engineHold('codex') ?? 'Waiting for Codex');
+  const mock = path.join(wt, rel, 'mockup.html');
+  if (!fs.existsSync(mock)) return block(p, t, `The UI/UX agent did not create ${rel}/mockup.html. See its log, then retry.`);
+  const keep = path.join(DESIGNS, p.id, t.id);
+  fs.mkdirSync(keep, { recursive: true });
+  for (const f of ['mockup.html', 'NOTES.md']) if (fs.existsSync(path.join(wt, rel, f))) fs.copyFileSync(path.join(wt, rel, f), path.join(keep, f));
+  const notes = fs.existsSync(path.join(keep, 'NOTES.md')) ? fs.readFileSync(path.join(keep, 'NOTES.md'), 'utf8') : '(no notes)';
+  t.design = { status: 'proposed', at: now(), rounds: round };
+  Object.assign(t, { status: 'DESIGN_REVIEW', designFeedback: null, note: 'UI design waiting for your approval' });
+  p.decisions = p.decisions.filter((d) => !(d.kind === 'design' && d.taskId === t.id && !d.answer));
+  addDecision(p, {
+    kind: 'design', taskId: t.id,
+    question: `Approve the UI design for ${t.id} "${t.title}"? (round ${round}, open the mockup)`,
+    detail: clip(notes, 1800),
+    options: [['approve', `Approve: ${NICK['frontend-dev']} builds this design`], ['revise', `Request changes: ${NICK['ui-ux']} revises it using my note`]],
+  });
+  say(`🎨 [${p.name}] ${t.id} UI design ready for your review (round ${round})`);
+  save();
+  return 'parked';
+}
+
 async function runTaskJob(p, t, job) {
   const r = await runTask(p, t, job);
   if (r !== true && r !== 'parked') p.runBudget = 0; // blocked or stopped: a human decides
@@ -552,10 +607,10 @@ function startNext() {
   for (const p of state.projects.filter(inFocus)) {
     if (p.status !== 'APPROVED' || p.resumePlan || !(p.auto || p.runBudget > 0) || p.tasks.some((t) => t.status === 'BLOCKED')) continue;
     if (projectJobs(p).some((j) => j.kind === 'plan')) continue;
-    const t = readyTasks(p.tasks).find((x) => roleFree(x.skipDev ? 'qa' : x.owner));
+    const t = readyTasks(p.tasks).find((x) => roleFree(needsDesign(x) ? 'ui-ux' : x.skipDev ? 'qa' : x.owner));
     if (!t) continue;
     if (!p.auto) p.runBudget--;
-    t.status = t.skipDev ? 'QA' : 'IN_PROGRESS'; // claimed, so no other job picks it
+    t.status = needsDesign(t) ? 'DESIGN' : t.skipDev ? 'QA' : 'IN_PROGRESS'; // claimed, so no other job picks it
     startJob({ kind: 'task', projectId: p.id, project: p.name, taskId: t.id, label: `${p.name}: ${t.id}` }, (job) => runTaskJob(p, t, job));
     return true;
   }
@@ -651,6 +706,19 @@ const server = http.createServer(async (req, res) => {
 
     if (req.method === 'GET' && url.pathname === '/') return send(res, 200, fs.readFileSync(path.join(import.meta.dirname, 'office.html')), 'text/html');
     if (req.method === 'GET' && url.pathname === '/board') return send(res, 200, fs.readFileSync(path.join(import.meta.dirname, 'index.html')), 'text/html');
+    if (req.method === 'GET' && url.pathname === '/design') {
+      const dp = state.projects.find((x) => x.id === url.searchParams.get('project'));
+      const tid = url.searchParams.get('task') || '';
+      const f = dp && TASK_ID.test(tid) && path.join(DESIGNS, dp.id, tid, 'mockup.html');
+      if (!f || !fs.existsSync(f)) return send(res, 404, 'No mockup for this task yet.', 'text/plain; charset=utf-8');
+      res.writeHead(200, {
+        'Content-Type': 'text/html; charset=utf-8',
+        'Content-Security-Policy': "sandbox; default-src 'none'; style-src 'unsafe-inline'; img-src data:; font-src data:",
+        'X-Content-Type-Options': 'nosniff',
+        'Referrer-Policy': 'no-referrer',
+      });
+      return res.end(fs.readFileSync(f));
+    }
     if (req.method === 'GET' && url.pathname === '/sounds.js') return send(res, 200, fs.readFileSync(path.join(import.meta.dirname, 'sounds.js')), 'text/javascript');
     if (req.method === 'GET' && url.pathname === '/template') {
       const file = url.searchParams.get('type') === 'ticket' ? 'JIRA_TICKET.md' : 'PROJECT_IDEA.md';
@@ -766,7 +834,7 @@ const server = http.createServer(async (req, res) => {
         if (!d) return send(res, 404, { error: 'Decision not found or already answered' });
         if (!d.options.some((o) => o.value === body.answer)) return send(res, 400, { error: 'Choose one of the options' });
         const note = String(body.note ?? '').trim().slice(0, 4000);
-        if (body.answer === 'other' && !note) return send(res, 400, { error: 'Write your answer in the note' });
+        if ((body.answer === 'other' || body.answer === 'revise') && !note) return send(res, 400, { error: 'Write your answer in the note' });
         if (d.kind === 'plan' && projectJobs(p).length) return send(res, 409, { error: `Busy: ${busyText()}. Try again when the agent finishes.` });
         answer(p, d, body.answer, note);
         save();

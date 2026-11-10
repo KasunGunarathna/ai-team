@@ -43,6 +43,7 @@ The terminal shows what the app is doing: projects added, planning, every agent 
 | Bolt | Backend dev | Claude Code |
 | Pixel | Frontend dev | Claude Code |
 | Bugsy | QA engineer | Codex |
+| Iris | UI/UX designer | Codex |
 
 - **Working:** the agent sits at their desk with the monitor lit, typing, and a speech bubble shows the task.
 - **Idle:** agents wander between the water cooler, sofa, plant, ping-pong table, café and fridge.
@@ -99,6 +100,16 @@ If several events happen at once, their sounds play one after another. Keep only
 - **Usage limit (per engine):** if Claude reports its usage limit, only the Claude agents (Mira, Bolt, Pixel) pause until the reset time it reports (plus 1 minute), then continue automatically; Bugsy (Codex) keeps testing. A Codex limit pauses only Bugsy. If no reset time is given, the app tries again after 30 minutes. The interrupted task goes back to READY with its work kept and is not counted as a failed attempt; a task stopped during QA resumes at QA. In the office, the whiteboard turns into a charging battery with the reset time, the affected agents recharge in the lounge with a blinking battery, and their monitors show 🔋 LOW.
 - **Login or subscription problem:** if Claude or Codex fails because you are logged out, a token expired or the plan is not active, that engine's agents pause (the others keep working) and the task waits, without counting as a failure. The office shows a red lock on the whiteboard with the fix (`claude`, then `/login`; or `codex login`), a blinking red key-card reader on the door, and the affected agents waiting at the door. The app tries again every 15 minutes; after logging in, press **🔑 Retry now** to continue at once.
 - **Usage meter:** the sidebar shows your current Claude 5-hour and 7-day usage, taken from the latest run.
+
+## UI/UX design approval (frontend tasks)
+
+Iris, the UI/UX agent (runs on Codex, `.claude/agents/ui-ux.md`), designs every frontend task before Pixel builds it:
+
+1. **Design:** Iris reads the task and product docs, follows the repo's existing UI if there is one, and writes `<plan dir>/design/<TASK>/mockup.html` (one self-contained static HTML page showing the screens and states, including mobile) and `NOTES.md` (layout, accessibility, states, open questions). The board shows the task in the **Design** column.
+2. **Your review:** a "🎨 design" decision appears in "Waiting for you" (board and office) with **🎨 Open UI mockup**. Choose **Approve**, or **Request changes** and write what to change; Iris then makes a new round with your note.
+3. **Build:** after approval, Pixel builds the real UI to match the mockup, and Bugsy (QA) also checks the UI against it.
+
+Backend tasks skip this step. Mockups are kept in `data/designs/` and (for projects) committed with the task. They are shown in a locked-down sandbox: no scripts, no outside requests, and no access to the app.
 
 ## Jira tickets on an existing project
 
