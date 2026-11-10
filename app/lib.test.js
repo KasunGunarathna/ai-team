@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseVerdict, nextTask, normaliseTasks, normaliseQuestions, secretFiles, formatClaudeEvent, formatCodexEvent, sumUsage, permissionRule, repoForKey, githubTreeUrl, summarySections, parseBaseline, commitType, ticketTitle, jiraComment, poolOf } from './lib.js';
+import { parseVerdict, nextTask, normaliseTasks, normaliseQuestions, secretFiles, formatClaudeEvent, formatCodexEvent, sumUsage, permissionRule, repoForKey, githubTreeUrl, summarySections, parseBaseline, commitType, ticketTitle, jiraComment, poolOf, newestVersion } from './lib.js';
 
 test('parseVerdict takes the last verdict and defaults to BLOCKED', () => {
   assert.equal(parseVerdict('blah\nVERDICT: PASS'), 'PASS');
@@ -218,4 +218,10 @@ test('poolOf separates BE tickets from the project team', () => {
   assert.equal(poolOf({ kind: 'be-ticket' }), 'be');
   assert.equal(poolOf({ kind: 'ticket' }), 'main');
   assert.equal(poolOf({ kind: 'idea' }), 'main');
+});
+
+test('newestVersion picks the highest version numerically', () => {
+  assert.equal(newestVersion(['7.0.0', '10.1.0', '9.9.9']), '10.1.0');
+  assert.equal(newestVersion(['5.2.0']), '5.2.0');
+  assert.equal(newestVersion([]), null);
 });

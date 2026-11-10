@@ -304,3 +304,6 @@ export function jiraComment({ key, outcome, sections, cycles, baselineFailing, b
 
 // Which scheduler pool a project's jobs count against: BE tickets have their own capacity.
 export const poolOf = (p) => (p.kind === 'be-ticket' ? 'be' : 'main');
+
+// Version folder names -> the newest one ("10.1.0" beats "9.9.9"), or null when there are none.
+export const newestVersion = (names) => [...names].sort((a, b) => a.localeCompare(b, undefined, { numeric: true })).pop() ?? null;

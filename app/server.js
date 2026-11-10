@@ -6,7 +6,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import os from 'node:os';
 import { spawn, execFile, execFileSync } from 'node:child_process';
-import { REF_TYPES, isImageRef, refFileName, parseFigmaUrl, TASK_ID, authFailure, codexRateLimits, tokensSince, isOpen, limitUntil, parseVerdict, nextTask, readyTasks, normaliseTasks, normaliseQuestions, secretFiles, formatClaudeEvent, formatCodexEvent, sumUsage, permissionRule, clip, poolOf, repoForKey, ticketTitle, summarySections } from './lib.js';
+import { REF_TYPES, isImageRef, refFileName, parseFigmaUrl, TASK_ID, authFailure, codexRateLimits, tokensSince, isOpen, limitUntil, parseVerdict, nextTask, readyTasks, normaliseTasks, normaliseQuestions, secretFiles, formatClaudeEvent, formatCodexEvent, sumUsage, permissionRule, clip, poolOf, repoForKey, ticketTitle, summarySections, githubTreeUrl, parseBaseline, commitType, jiraComment, newestVersion } from './lib.js';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
 const DATA = process.env.AI_TEAM_DATA || path.join(ROOT, 'data');
@@ -30,6 +30,14 @@ const BE_REPOS = {
   'giftlips-api': { dir: process.env.GIF_API_DIR || home('Development/QRTiger/GiftLips/giftlips-api'), envFile: '.env.test', dev: 'gl-dev' },
 };
 const BE_MEMORY = path.join(DATA, 'be-tickets.json');
+const NO_PROMPT = { ...process.env, GIT_TERMINAL_PROMPT: '0' }; // git must fail, never hang on a password prompt
+// Ticket devs load superpowers + ponytail (user plugins do not load with --setting-sources project): newest cached version of each.
+const PLUGIN_DIRS = ['.claude/plugins/cache/claude-plugins-official/superpowers', '.claude/plugins/cache/ponytail/ponytail'].map((rel) => {
+  const base = home(rel);
+  const v = fs.existsSync(base) ? newestVersion(fs.readdirSync(base, { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => d.name)) : null;
+  if (!v) say(`⚠ plugin not found for the BE ticket devs, they run without it: ${base}`);
+  return v && path.join(base, v);
+}).filter(Boolean);
 const DESIGNS = path.join(DATA, 'designs'); // proposed/approved mockups, kept outside worktrees
 // Frontend tasks need an approved UI design (by Iris, the UI/UX agent) before the developer starts.
 const needsDesign = (t) => t.owner === 'frontend-dev' && t.design?.status !== 'approved';
@@ -249,9 +257,9 @@ const GUARDED = ['.claude', '.codex', '.mcp.json'];
 const NO_CONFIG_WRITES = GUARDED.flatMap((g) => [g, `**/${g}`]).flatMap((g) => [`Write(${g}${g.endsWith('.json') ? '' : '/**'})`, `Edit(${g}${g.endsWith('.json') ? '' : '/**'})`]);
 
 // Only the project's committed settings load (not your personal or .local settings), and only this app's allow list applies.
-const claudeArgs = (agent, prompt, tools) =>
+const claudeArgs = (agent, prompt, tools, extra = []) =>
   ['-p', prompt, '--append-system-prompt', agentBody(agent), '--setting-sources', 'project', '--allowedTools', tools.join(','), '--disallowedTools', NO_CONFIG_WRITES.join(','),
-    '--permission-mode', 'acceptEdits', '--output-format', 'stream-json', '--verbose'];
+    '--permission-mode', 'acceptEdits', '--output-format', 'stream-json', '--verbose', ...extra];
 
 function startJob(spec, fn) {
   const job = { id: crypto.randomUUID().slice(0, 8), stopped: false, child: null, role: null, needs: null, startedAt: now(), ...spec };
@@ -675,8 +683,201 @@ async function runTaskJob(p, t, job) {
 
 const inFocus = (p) => !state.focus || state.focus === p.id;
 
-// Placeholder: the BE ticket flow (plan, dev, QA, commit, push, comment) replaces this.
-async function runBeTicket(p, t, job) { return block(p, t, 'BE flow not implemented yet'); }
+// ---------- BE ticket team: fresh branch from origin/main, baseline, dev -> QA (<= 2 fix cycles), commit, push, Jira comment ----------
+// Workspace data/worktrees/<id>/<KEY> on a NEW branch p.branch from origin/main; an existing branch (local or origin) is never reused.
+function beWorktree(p, t) {
+  const dir = taskWorktree(p, t), b = p.branch;
+  if (fs.existsSync(path.join(dir, '.git'))) return dir;
+  execFileSync('git', ['fetch', '-q', 'origin', 'main'], { cwd: p.path, env: NO_PROMPT, stdio: 'ignore', timeout: 120_000 });
+  let onOrigin = true;
+  try { execFileSync('git', ['ls-remote', '--exit-code', '--heads', 'origin', `refs/heads/${b}`], { cwd: p.path, env: NO_PROMPT, stdio: 'ignore', timeout: 60_000 }); }
+  catch (e) { if (e.status !== 2) throw new Error(`Could not check origin for branch ${b}: ${e.message}`); onOrigin = false; }
+  if (onOrigin || branchExists(p, b)) throw new Error(`Branch ${b} already exists (local or on origin). Choose another branch name on the ticket card.`);
+  fs.rmSync(dir, { recursive: true, force: true });
+  fs.mkdirSync(path.dirname(dir), { recursive: true });
+  git(p.path, 'worktree', 'prune');
+  git(p.path, 'worktree', 'add', '-q', '--no-track', '-b', b, dir, 'origin/main');
+  t.ownBranch = b; // the only branch removeBeWorktree may delete
+  t.baseSha = git(p.path, 'rev-parse', 'origin/main');
+  const { envFile } = BE_REPOS[p.repo];
+  if (fs.existsSync(path.join(p.path, 'node_modules'))) fs.symlinkSync(path.join(p.path, 'node_modules'), path.join(dir, 'node_modules'));
+  let tracked = true;
+  try { git(p.path, 'ls-files', '--error-unmatch', envFile); } catch { tracked = false; }
+  if (!tracked && fs.existsSync(path.join(p.path, envFile))) fs.copyFileSync(path.join(p.path, envFile), path.join(dir, envFile));
+  for (const e of ['node_modules', envFile]) excludeIn(p.path, e); // no trailing slash: also matches the symlink
+  say(`⎇ [${p.name}] ${t.id} workspace ready on new branch ${b} from origin/main: ${dir}`);
+  return dir;
+}
+
+// Remove the workspace; delete the branch only if this app created it and it has no commits beyond origin/main.
+function removeBeWorktree(p, t) {
+  const dir = taskWorktree(p, t);
+  try { git(p.path, 'worktree', 'remove', '--force', dir); } catch { fs.rmSync(dir, { recursive: true, force: true }); }
+  try { git(p.path, 'worktree', 'prune'); } catch { /* nothing to prune */ }
+  const b = t.ownBranch;
+  if (b && branchExists(p, b) && git(p.path, 'rev-list', '--count', `origin/main..${b}`) === '0') { git(p.path, 'branch', '-D', b); t.ownBranch = null; }
+}
+
+function pushBranch(p) {
+  return new Promise((resolve) => execFile('git', ['push', '-u', 'origin', p.branch], { cwd: p.path, env: NO_PROMPT, timeout: 120_000 }, (err, _out, stderr) => {
+    if (err) return resolve({ ok: false, error: String(stderr || err.message).trim() });
+    let url = null;
+    try { url = githubTreeUrl(git(p.path, 'remote', 'get-url', 'origin'), p.branch); } catch { /* no URL, the push still succeeded */ }
+    resolve({ ok: true, url });
+  }));
+}
+
+// outcome: 'pushed' | 'push_failed' | 'no_code'. The comment is built by the app from SUMMARY.md, never by an agent.
+function finishBe(p, t, outcome, extra = {}) {
+  const branchUrl = outcome === 'pushed' ? extra.branchUrl : null;
+  Object.assign(t, {
+    status: 'DONE', outcome, branchUrl, instructions: null, feedback: null,
+    note: outcome === 'push_failed' ? `Push failed: ${p.branch} is committed locally in ${p.path}` : null,
+    comment: jiraComment({ key: p.ticketKey, outcome, sections: summarySections(t.summary ?? ''), cycles: t.cycles ?? 0, baselineFailing: t.baseline?.failing ?? [], branch: p.branch, branchUrl }),
+  });
+  remember(p, t);
+  save();
+  say(`✓ [${p.name}] ${t.id} DONE (${outcome})${branchUrl ? ` · ${branchUrl}` : ''}`);
+  return true;
+}
+
+async function runBeTicket(p, t, job) {
+  let wt;
+  try { wt = beWorktree(p, t); } catch (e) { return block(p, t, `Could not prepare this ticket's workspace: ${e.message}`); }
+  remember(p, t);
+  const ai = (f) => path.join(wt, p.planDir, f);
+  const readAi = (f) => (fs.existsSync(ai(f)) ? fs.readFileSync(ai(f), 'utf8') : null);
+  let feedback = t.feedback || '';
+  // Same as runTask: hand the ticket back to the queue without counting a failure; work stays in its worktree.
+  const park = (stage, note) => {
+    Object.assign(t, { status: 'READY', skipDev: stage === 'QA', feedback, note });
+    if (!p.auto) p.runBudget++;
+    save();
+    return 'parked';
+  };
+  const holdFor = (role) => state.teaBreak ? 'Paused for the team tea break'
+    : state.breaks[role] ? `Waiting: ${NICK[role]} is on a break`
+    : engineHold(engineOf(role));
+  const codex = (label, prompt, reportFile) => agentRun(p, t, label, 'codex', ['exec', '--json', '--ignore-rules', '-C', wt, '-s', 'workspace-write', '-o', reportFile, prompt], job, wt, null, 'be-qa');
+
+  // Baseline: the suite once on the clean branch (= origin/main), so QA fails the ticket only for new failures.
+  if (!t.baseline) {
+    const hold = holdFor('be-qa');
+    if (hold) return park('QA', hold); // parked as QA so the scheduler waits for Quinn; baseline still runs first
+    Object.assign(t, { status: 'QA', note: 'Baseline test run on clean main' }); save();
+    fs.mkdirSync(path.join(wt, p.planDir), { recursive: true });
+    fs.rmSync(ai('baseline.json'), { force: true });
+    const reportFile = path.join(DATA, 'logs', p.id, `${t.id}-baseline-${Date.now()}.report.md`);
+    const prompt = `${agentBody('be-qa')}\n\n---\nBaseline run for Jira ticket ${t.id} (${p.repo}). This workspace is the clean branch, equal to origin/main; nobody has changed it.\n` +
+      `Find the repo's real test command (package.json scripts, README) and run the full test suite once. Then write ${p.planDir}/baseline.json as ` +
+      '{"ran":true|false,"command":"...","failing":["<suite> > <test>"],"error":null|"..."}. ' +
+      'Set "ran":false with the error if the suite could not run at all (for example a database is down). Edit nothing else.';
+    const r = await codex(`${t.id}-baseline`, prompt, reportFile);
+    if (job.paused) return park('QA', 'Paused for the team tea break (baseline restarts)');
+    if (!r || job.stopped) return block(p, t, 'Stopped by you during the baseline test run.');
+    if (r.limited || r.authFail) return park('QA', engineHold('codex') ?? 'Waiting for Codex');
+    const base = parseBaseline(readAi('baseline.json') ?? '');
+    if (!base.ran) return block(p, t, `Baseline tests could not run on clean main: ${base.error ?? 'unknown error'}. Start what the tests need (DB, Redis), then retry.`);
+    Object.assign(t, { baseline: base, skipDev: false, note: null });
+    remember(p, t); save();
+  }
+
+  let handoffs = 0;
+  for (let cycle = t.cycles || 0; cycle <= MAX_FIX_CYCLES; cycle++) {
+    t.cycles = cycle; t.note = null;
+    if (!t.skipDev) {
+      const hold = holdFor(t.owner);
+      if (hold) return park('DEV', hold);
+      t.status = 'IN_PROGRESS'; save();
+      const devPrompt = `Jira ticket ${t.id} for ${p.repo}:\n\n${p.idea}\n\n` +
+        'No human is in the loop: never ask, decide yourself, and write every unclear point under "Open questions / assumptions". ' +
+        `Write your plan to ${p.planDir}/PLAN.md before coding, and ${p.planDir}/SUMMARY.md when finished. Do not commit.` +
+        `\n\nPast tickets in this repo:\n${pastTickets(p.repo) || '(none yet)'}` +
+        (t.instructions ? `\n\nInstructions from the product owner for this ticket:\n${t.instructions}` : '') +
+        (feedback ? `\n\nYour previous attempt was not accepted. Fix every point:\n\n${feedback}` : '') +
+        (t.interrupted ? '\n\nYour previous session was interrupted by a break. Continue from the current state of the workspace.' : '') +
+        (t.handoff ? `\n\nYour previous session ran out of context and this is a fresh one. Do not redo finished work. Memory from that session:\n\n${t.handoff}` : '');
+      t.interrupted = false; t.handoff = null;
+      const cfg = configChanges(p, wt);
+      if (cfg) return block(p, t, `Agent configuration files were changed in this ticket's workspace, so no agent will run there until you review them:\n${cfg}\nWorkspace: ${wt}`);
+      const tools = [...DEV_TOOLS, 'Skill', 'Bash(rm node_modules)', ...p.allowTools];
+      const dev = await agentRun(p, t, `${t.id}-dev-${cycle}${handoffs ? `-s${handoffs + 1}` : ''}`, 'claude', claudeArgs(t.owner, devPrompt, tools, PLUGIN_DIRS.flatMap((d) => ['--plugin-dir', d])), job, wt, HANDOFF_AT);
+      if (job.paused) { t.interrupted = true; return park('DEV', 'Paused for the team tea break'); }
+      if (!dev || job.stopped) return block(p, t, 'Stopped by you during development.');
+      (t.attempts ??= []).push({ at: now(), kind: 'dev', cycle, log: dev.logPath, usage: dev.usage ?? null });
+      remember(p, t);
+      raiseDenials(p, dev.denials, `${t.id} (${t.owner})`);
+      if (dev.limited || dev.authFail) return park('DEV', engineHold('claude') ?? 'Waiting for Claude');
+      if (dev.handedOff) {
+        if (++handoffs > MAX_HANDOFFS) return block(p, t, `The developer filled its context ${MAX_HANDOFFS + 1} times in one attempt. The ticket is probably too big: retry with narrower instructions.`);
+        t.handoff = clip(`What it said last:\n${(dev.notes ?? []).join('\n---\n')}\n\nFiles changed so far (git status):\n${git(wt, 'status', '--short') || '(none)'}`, 6000);
+        cycle--; continue; // same attempt, fresh session
+      }
+      t.plan = readAi('PLAN.md'); t.summary = readAi('SUMMARY.md');
+      remember(p, t);
+      if (!t.summary) return block(p, t, `Dev finished without writing ${p.planDir}/SUMMARY.md`);
+      if (!git(wt, 'status', '--porcelain')) { // nothing changed: feedback-only ticket, no QA/commit/push
+        removeBeWorktree(p, t);
+        t.files = [];
+        return finishBe(p, t, 'no_code');
+      }
+    }
+    t.skipDev = false;
+    const hold = holdFor('be-qa');
+    if (hold) return park('QA', hold);
+    const qaCfg = configChanges(p, wt);
+    if (qaCfg) return block(p, t, `Agent configuration files were changed in this ticket's workspace, so QA will not run there until you review them:\n${qaCfg}\nWorkspace: ${wt}`);
+    t.status = 'QA'; save();
+    const reportFile = path.join(DATA, 'logs', p.id, `${t.id}-qa-${cycle}-${Date.now()}.report.md`);
+    const failing = t.baseline.failing;
+    const qaPrompt = `${agentBody('be-qa')}\n\n---\nJira ticket under test: ${t.id} (${p.repo}):\n\n${p.idea}\n\n` +
+      `Baseline failures on clean main (ignore these): ${failing.length ? `\n${failing.map((f) => `- ${f}`).join('\n')}` : 'none'}\n\n` +
+      `The implementation is the uncommitted change set: inspect it with git status and git diff. The developer's notes are in ${p.planDir}/SUMMARY.md. ` +
+      'Run the real lint, typecheck and test commands, including the existing suite. ' +
+      'Do not edit application code or tests. End your reply with exactly one line: VERDICT: PASS, VERDICT: FAIL or VERDICT: BLOCKED.';
+    const qa = await codex(`${t.id}-qa-${cycle}`, qaPrompt, reportFile);
+    if (job.paused) return park('QA', 'Paused for the team tea break (QA restarts)');
+    if (!qa || job.stopped) return block(p, t, 'Stopped by you during QA.');
+    if (qa.limited || qa.authFail) return park('QA', engineHold('codex') ?? 'Waiting for Codex');
+    const report = fs.existsSync(reportFile) ? fs.readFileSync(reportFile, 'utf8') : '';
+    fs.appendFileSync(qa.logPath, `\n===== QA report =====\n${report || '(none)'}\n`);
+    const verdict = parseVerdict(report);
+    (t.attempts ??= []).push({ at: now(), kind: 'qa', cycle, verdict, report: reportFile, log: qa.logPath, usage: qa.usage ?? null });
+    remember(p, t);
+    say(`${verdict === 'PASS' ? '✓' : '✗'} [${p.name}] ${t.id} QA verdict: ${verdict} (attempt ${cycle + 1}/${MAX_FIX_CYCLES + 1})`);
+
+    if (verdict === 'PASS') {
+      t.plan = readAi('PLAN.md') ?? t.plan; t.summary = readAi('SUMMARY.md') ?? t.summary; // kept before the worktree goes
+      git(wt, 'add', '-A');
+      const staged = git(wt, 'diff', '--cached', '--name-only').split('\n').filter(Boolean);
+      const secrets = secretFiles(staged);
+      if (secrets.length) { git(wt, 'reset', '-q'); return block(p, t, `QA passed but secret-like files were created: ${secrets.join(', ')}. Add them to .gitignore, then choose "Retry, keeping this task's work".`); }
+      const cfg = configChanges(p, wt);
+      if (cfg) { git(wt, 'reset', '-q'); return block(p, t, `QA passed, but agent configuration files were changed, so this ticket will not be committed until you review them:\n${cfg}\nWorkspace: ${wt}`); }
+      git(wt, 'commit', '-q', '-m', `${commitType(p.idea)}(${p.ticketKey}): ${t.title}\n\nQA: PASS (Codex), fix cycles: ${cycle}`);
+      t.files = staged;
+      remember(p, t);
+      removeBeWorktree(p, t); // the branch has a commit now, so it is kept
+      const push = await pushBranch(p);
+      t.push = push;
+      remember(p, t);
+      if (push.ok) return finishBe(p, t, 'pushed', { branchUrl: push.url ?? `${p.branch} (pushed)` });
+      finishBe(p, t, 'push_failed');
+      addDecision(p, {
+        kind: 'push', taskId: t.id,
+        question: `Push of ${p.branch} failed. The branch is committed locally in ${p.path}.`,
+        detail: push.error,
+        options: [['retry', 'Retry push'], ['manual', "I'll push myself"]],
+      });
+      save();
+      return true;
+    }
+    if (verdict === 'BLOCKED') return block(p, t, `QA reported BLOCKED (missing tooling, environment or unclear criteria):\n\n${clip(report, 1500)}`);
+    feedback = `QA (an independent reviewer) FAILED it:\n\n${report}`;
+    t.status = 'CHANGES_REQUESTED'; save();
+  }
+  return block(p, t, `QA failed ${MAX_FIX_CYCLES + 1} times. Last report:\n\n${clip(feedback, 1500)}`);
+}
 async function runBeTicketJob(p, t, job) {
   await runBeTicket(p, t, job);
   remember(p, t);
