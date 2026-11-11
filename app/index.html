@@ -302,7 +302,7 @@ function render() {
         el('b', { textContent: 'Auto-run' }), el('span', { className: 'muted', textContent: '(next task starts automatically until all DONE)' })) : null,
       p.status === 'APPROVED' && !p.auto ? el('button', { textContent: 'Run next', onclick: () => act(`/api/projects/${p.id}/run`, { max: Number(runN.value) }) }) : null,
       p.status === 'APPROVED' && !p.auto ? runN : null,
-      p.status === 'APPROVED' && !p.auto ? el('span', { className: 'muted', textContent: p.runBudget ? `${p.runBudget} task(s) queued` : 'task(s): Dev (Claude Code) → QA (Codex). Queues if another agent is busy.' }) : null),
+      p.status === 'APPROVED' && !p.auto ? el('span', { className: 'muted', textContent: p.runBudget ? `${p.runBudget} task(s) queued` : 'task(s): Dev → QA (each agent on its chosen AI). Queues if another agent is busy.' }) : null),
     el('div', { className: 'err', textContent: actError || p.error || '' }),
     open.length ? el('h3', { textContent: `Waiting for you (${open.length})` }) : null,
     ...open.map(d => decisionNode(p, d)),

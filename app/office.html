@@ -389,16 +389,16 @@
 <script>
 // ---------- the team ----------
 const TEAM = [
-  { role: 'pm-ba', name: 'Mira', title: 'PM / BA', engine: 'Claude', shirt: '#7950f2', hair: '#5c3b28', skin: '#f3c79b', style: 'bun' },
-  { role: 'backend-dev', name: 'Bolt', title: 'Backend dev', engine: 'Claude', shirt: '#1c7ed6', hair: '#212529', skin: '#b9784f', style: 'phones' },
-  { role: 'frontend-dev', name: 'Pixel', title: 'Frontend dev', engine: 'Claude', shirt: '#e64980', hair: '#f59f00', skin: '#ffe0bd', style: 'long' },
-  { role: 'qa', name: 'Bugsy', title: 'QA engineer', engine: 'Codex', shirt: '#0ca678', hair: '#7a4a2a', skin: '#d9a066', style: 'glasses' },
-  { role: 'ui-ux', name: 'Iris', title: 'UI/UX designer', engine: 'Codex', shirt: '#f76707', hair: '#862e9c', skin: '#f1c27d', style: 'beret' },
+  { role: 'pm-ba', name: 'Mira', title: 'PM / BA', shirt: '#7950f2', hair: '#5c3b28', skin: '#f3c79b', style: 'bun' },
+  { role: 'backend-dev', name: 'Bolt', title: 'Backend dev', shirt: '#1c7ed6', hair: '#212529', skin: '#b9784f', style: 'phones' },
+  { role: 'frontend-dev', name: 'Pixel', title: 'Frontend dev', shirt: '#e64980', hair: '#f59f00', skin: '#ffe0bd', style: 'long' },
+  { role: 'qa', name: 'Bugsy', title: 'QA engineer', shirt: '#0ca678', hair: '#7a4a2a', skin: '#d9a066', style: 'glasses' },
+  { role: 'ui-ux', name: 'Iris', title: 'UI/UX designer', shirt: '#f76707', hair: '#862e9c', skin: '#f1c27d', style: 'beret' },
   // Superpowers & Ponytail Squad: own room with its own desks (SQUAD_DESK_X); Captain Plan waits at the to-do board when idle.
-  { role: 'squad-pm', name: 'Captain Plan', title: 'Squad PM', engine: 'Claude', shirt: '#e03131', hair: '#f59f00', skin: '#ffd8a8', style: 'bun', room: 'squad', cape: true },
-  { role: 'rc-dev', name: 'Rocket Rocco', title: 'ReviewCook dev', engine: 'Claude', shirt: '#f08c00', hair: '#343a40', skin: '#c68642', style: 'phones', room: 'squad' },
-  { role: 'gl-dev', name: 'Giggly Gigi', title: 'GiftLips dev', engine: 'Claude', shirt: '#d6336c', hair: '#5f3dc4', skin: '#ffdbac', style: 'long', room: 'squad' },
-  { role: 'be-qa', name: 'Detective Quinn', title: 'Squad QA', engine: 'Codex', shirt: '#2f9e44', hair: '#a0522d', skin: '#e0ac69', style: 'glasses', room: 'squad' },
+  { role: 'squad-pm', name: 'Captain Plan', title: 'Squad PM', shirt: '#e03131', hair: '#f59f00', skin: '#ffd8a8', style: 'bun', room: 'squad', cape: true },
+  { role: 'rc-dev', name: 'Rocket Rocco', title: 'ReviewCook dev', shirt: '#f08c00', hair: '#343a40', skin: '#c68642', style: 'phones', room: 'squad' },
+  { role: 'gl-dev', name: 'Giggly Gigi', title: 'GiftLips dev', shirt: '#d6336c', hair: '#5f3dc4', skin: '#ffdbac', style: 'long', room: 'squad' },
+  { role: 'be-qa', name: 'Detective Quinn', title: 'Squad QA', shirt: '#2f9e44', hair: '#a0522d', skin: '#e0ac69', style: 'glasses', room: 'squad' },
 ];
 const SQUAD_DY = 70; // squad desks sit lower: the wall has the to-do board
 const SQUAD_DESK_X = { 'squad-pm': 240, 'rc-dev': 460, 'gl-dev': 690, 'be-qa': 1000 };
@@ -437,7 +437,10 @@ const SQUAD_DOOR = [{ id: 'sdoor1', x: 1200, y: 300 }, { id: 'sdoor2', x: 1280, 
 const SQUAD_BOARD = { x: 820, y: 300 }; // in the gap between Gigi's and Quinn's desks
 const ROOM = { main: { spots: SPOTS, tea: TEA, charge: CHARGE, door: DOOR }, squad: { spots: SQUAD_SPOTS, tea: SQUAD_TEA, charge: SQUAD_CHARGE, door: SQUAD_DOOR } };
 const roomOf = (t) => ROOM[inSquad(t) ? 'squad' : 'main'];
-const engineOf = (role) => (['qa', 'ui-ux', 'be-qa'].includes(role) ? 'codex' : 'claude');
+const engineOf = (role) => S?.engines?.[role] ?? (['qa', 'ui-ux', 'be-qa'].includes(role) ? 'codex' : 'claude'); // set per agent on its card
+const ENGINE_NAME = { claude: 'Claude', codex: 'Codex' };
+const engName = (t) => ENGINE_NAME[engineOf(t.role)];
+const onEngine = (e, sep) => TEAM.filter((t) => engineOf(t.role) === e).map((t) => t.name).join(sep) || 'nobody';
 const holdOf = (role) => { const e = engineOf(role); return S.authFail?.[e] ? 'auth' : S.limits?.[e] > Date.now() ? 'limit' : null; };
 const $ = (id) => document.getElementById(id);
 const NS = 'http://www.w3.org/2000/svg';
@@ -505,7 +508,7 @@ function hairFor(t) {
 
 for (const t of TEAM) {
   const g = svgEl(`
-    <title>${t.name}: ${t.title} (${t.engine})</title>
+    <title>${t.name}: ${t.title}</title>
     <ellipse class="shadow" cx="0" cy="62" rx="24" ry="6" fill="#00000030"/>
     <g class="bob">
       ${t.cape ? `<path d="M-18 2 Q-42 26 -40 50 Q-30 44 -22 50 Q-11 44 0 50 Q11 44 22 50 Q30 44 40 50 Q42 26 18 2Z" fill="#c92a2a"/>` : ''}
@@ -713,7 +716,7 @@ function scenery() {
 
 function hud() {
   const open = S.open, paused = S.teaBreak;
-  const outages = ['claude', 'codex'].map((e) => ({ e, name: e === 'claude' ? 'Claude' : 'Codex', who: e === 'claude' ? 'Mira, Bolt, Pixel, Rocket Rocco and Giggly Gigi' : 'Bugsy, Iris and Detective Quinn', auth: S.authFail?.[e], until: S.limits?.[e] > Date.now() ? S.limits[e] : null })).filter((o) => o.auth || o.until);
+  const outages = ['claude', 'codex'].map((e) => ({ e, name: e === 'claude' ? 'Claude' : 'Codex', who: onEngine(e, ', '), auth: S.authFail?.[e], until: S.limits?.[e] > Date.now() ? S.limits[e] : null })).filter((o) => o.auth || o.until);
   for (const e of ['claude', 'codex']) {
     const o = outages.find((x) => x.e === e), chip = $(e + 'Chip');
     chip.hidden = !o;
@@ -745,14 +748,14 @@ function hud() {
     const act = activeFor(t.role), isActive = !!act;
     const mins = isActive ? Math.max(0, Math.round((Date.now() - Date.parse(act.startedAt)) / 60000)) : 0;
     const doing = isActive ? `${act.tests ? 'running the test suite for' : /-testplan$/.test(act.label) ? 'reviewing the test plan of' : t.role === 'qa' || t.role === 'be-qa' ? 'testing' : t.role === 'pm-ba' || t.role === 'squad-pm' ? 'planning' : t.role === 'ui-ux' ? 'designing the UI for' : 'coding'} ${act.label} in ${act.project} (${mins} min)${S.breaks[t.role] ? ' · break after this step' : ''}`
-      : !open ? 'gone home 🏠' : S.breaks[t.role] ? 'on a break ☕ (click to call back)' : holdOf(t.role) === 'auth' ? `waiting at the door 🔑: ${t.engine} login/subscription problem` : holdOf(t.role) === 'limit' ? `recharging 🔋 until the ${t.engine} limit resets (${hhmm(S.limits[engineOf(t.role)])})` : S.teaBreak ? 'on tea break ☕ until you press Back to work'
+      : !open ? 'gone home 🏠' : S.breaks[t.role] ? 'on a break ☕ (click to call back)' : holdOf(t.role) === 'auth' ? `waiting at the door 🔑: ${engName(t)} login/subscription problem` : holdOf(t.role) === 'limit' ? `recharging 🔋 until the ${engName(t)} limit resets (${hhmm(S.limits[engineOf(t.role)])})` : S.teaBreak ? 'on tea break ☕ until you press Back to work'
       : t.role === 'pm-ba' && S.projects.some((p) => p.decisions.some((d) => !d.answer)) ? 'waiting for your decisions at the whiteboard ⚑'
       : (pos[t.role]?.said ?? 'idle').replace(/^\S+\s/, '').toLowerCase();
     const row = document.createElement('div'); row.className = 'who';
     const dot = document.createElement('span'); dot.className = 'dot'; dot.style.background = t.shirt; dot.textContent = t.name[0];
     const txt = document.createElement('div');
     const b = document.createElement('b'); b.textContent = t.name;
-    const m = document.createElement('span'); m.className = 'muted'; m.textContent = ` ${t.title} · ${t.engine}`;
+    const m = document.createElement('span'); m.className = 'muted'; m.textContent = ` ${t.title} · ${engName(t)}`;
     const d = document.createElement('div'); d.className = 'muted'; d.textContent = (isActive ? '🟢 ' : '') + doing;
     txt.append(b, m, d);
     if (isActive && act.context) txt.append(ctxBar(act.context));
@@ -800,7 +803,7 @@ function drawOutage(outages) {
 function drawUsage() {
   const fmtTok = (n) => (n >= 1e6 ? (n / 1e6).toFixed(1) + 'M' : n >= 1e3 ? Math.round(n / 1e3) + 'k' : String(n));
   const when = (ms) => new Date(ms).toLocaleString([], { weekday: 'short', hour: '2-digit', minute: '2-digit' });
-  for (const [key, name, who] of [['claude', 'Claude', 'Mira · Bolt · Pixel · Captain Plan · Rocco · Gigi'], ['codex', 'Codex', 'Bugsy · Iris · Quinn']]) {
+  for (const [key, name, who] of [['claude', 'Claude', onEngine('claude', ' · ')], ['codex', 'Codex', onEngine('codex', ' · ')]]) {
     const u = S.weekly?.[key], card = $('u-' + key);
     const left = u?.week ? Math.max(0, 100 - u.week.pct) : null;
     const color = left == null ? 'var(--muted)' : left <= 10 ? 'var(--bad)' : left <= 30 ? 'var(--warn)' : 'var(--ok)';
@@ -932,7 +935,10 @@ function drawCard() {
   card.replaceChildren(...[ // filter: replaceChildren would print a null as the text "null"
     el('button', { className: 'x', textContent: '×', title: 'Close', onclick: () => { cardRole = null; drawCard(); } }),
     el('h3', { textContent: `${t.name}` }),
-    el('div', { className: 'muted', textContent: `${t.title} · ${t.engine}` }),
+    el('div', { className: 'muted', textContent: `${t.title} · ${engName(t)}` }),
+    el('div', { className: 'row', role: 'group', ariaLabel: 'AI engine' }, el('span', { className: 'muted', textContent: '🤖 Runs on' }),
+      ...['claude', 'codex'].map((e) => el('button', { className: engineOf(t.role) === e ? '' : 'ghost', textContent: ENGINE_NAME[e], ariaPressed: String(engineOf(t.role) === e),
+        title: act ? 'Applies from the next run; the current step finishes first' : '', onclick: () => engineOf(t.role) !== e && post('/api/engine', { role: t.role, engine: e }) }))),
     act && act.context ? ctxBar(act.context) : null,
     el('p', { style: 'margin:8px 0 0', textContent: act ? `Working on ${act.label} in ${act.project}.${onBreak ? ' Goes on a break after this step.' : ''}` : onBreak ? 'On a break. New work for this agent waits.' : 'Free. Picks up the next task for this role.' }),
     el('div', { className: 'row' },
