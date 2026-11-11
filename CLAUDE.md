@@ -21,7 +21,7 @@ Delegate proactively through Claude Code's Agent tool when available:
 4. Select the next **READY** task whose dependencies are DONE. Limit active implementation to one task at first; use parallel execution only for independent tasks in isolated worktrees and within resource limits.
 5. Assign implementation to the matching specialist. Require code, tests, concise change summary, and test evidence.
 6. Send the result to `qa-engineer`, which independently runs relevant real commands. Never mark QA passed based on a developer's claim alone.
-7. If QA fails, change task to `CHANGES_REQUESTED`, append exact failures to the task, and send it back to the same developer. Up to **2 fix cycles**; then mark `BLOCKED` and explain to the user.
+7. If QA fails, change task to `CHANGES_REQUESTED`, append exact failures to the task, and send it back to the same developer. Code, config or test problems QA finds (even ones it calls blockers) go back to the developer automatically, without asking the user, up to **5 fix cycles**; then mark `BLOCKED` and explain to the user. Ask the user only for access, credentials, approvals, paid/external accounts, business decisions, or host problems no repo change can solve.
 8. If QA passes, send to `code-reviewer`. Any blocking issue goes back to Dev, then QA must re-run after changes.
 9. Set task `DONE` only after QA PASS, review PASS and any required human approval. Update `docs/BACKLOG.md` and `reports/DAILY.md` with evidence and next tasks.
 10. Repeat for the next ready task during the current explicitly requested session, subject to token/time/usage/permission limits. Do not silently launch indefinite background work.

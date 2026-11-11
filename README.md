@@ -29,7 +29,7 @@ The app prints nothing to the terminal. `data/logs/server.log` records what the 
    - DEV implements the task and adds tests.
    - QA (Codex) runs the tests independently.
    - If QA passes, the app commits `feat(TASK-xxx): ...` and marks the task DONE.
-   - If QA fails, the QA report goes back to DEV. This repeats up to 2 fix cycles, then the task becomes BLOCKED.
+   - If QA fails, the QA report goes back to DEV. This repeats without asking you, up to 5 fix cycles, then the task becomes BLOCKED. QA reports BLOCKED only for what a human must do (access, credentials, approvals, business decisions, host problems); anything fixable in the code is a FAIL.
    - BLOCKED stops the run. Its changes stay uncommitted so you can inspect them. Fix the problem, then press **Retry**.
 5. **Daily run:** while the app is running, at `DAILY_AT` it runs `DAILY_TASKS` tasks for every approved project.
 
@@ -148,7 +148,7 @@ Open the **Squad tickets** tab on the board, type the Jira key, and paste the ti
 4. **Plan:** Captain Plan brainstorms and writes `.aiteam/<KEY>/PLAN.md`, including a test plan. He decides on his own, because no human answers questions, and lists open questions. If no code is needed, he writes the findings and steps instead, and the ticket ends with a "no code change" comment.
 5. **Test-plan review:** Detective Quinn reviews the test plan once and writes `TEST-REVIEW.md`, covering the agreed tests and any to add.
 6. **Build:** Rocco or Gigi only implements the plan and the agreed tests, then writes `SUMMARY.md`.
-7. **Tests, then QA:** the app runs `npm test` again, then Quinn reviews the change against the acceptance criteria, with no network. A bug of either kind goes back to **Captain Plan**, who revises the plan from the failure report, and the dev tries again. Each ticket gets at most 2 fix cycles.
+7. **Tests, then QA:** the app runs `npm test` again, then Quinn reviews the change against the acceptance criteria, with no network. A bug of either kind goes back to **Captain Plan**, who revises the plan from the failure report, and the dev tries again. Each ticket gets at most 5 fix cycles.
 8. **Commit and push (git only):** the app uses only `git fetch`, `branch`, `commit`, `push` and `pull`. It never uses `gh` or the GitHub API, and never reads your GitHub credentials. On PASS it commits `feat(KEY): …` (`fix(KEY): …` for a Bug) and runs `git push -u origin <branch>`, never with force.
 9. **Jira comment and PR link:** the card shows a plain-text comment with **Copy comment**, the branch link, and **🔀 Create PR (draft)**. That is the link GitHub prints on push, or the compare page. Click it, choose **Create draft pull request** against `main`, and merge it yourself. If the push fails, choose **Retry push** or **I'll push myself**.
 
