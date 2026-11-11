@@ -56,6 +56,7 @@
   .decision input[type=radio] { margin-top:4px; }
   .decision textarea { width:100%; min-height:56px; font:inherit; padding:6px 8px; border-radius:8px; border:1px solid var(--line); background:var(--card); color:inherit; margin:6px 0; }
   .decision pre { white-space:pre-wrap; font-size:12px; max-height:160px; overflow:auto; background:var(--card); border-radius:8px; padding:8px; margin:6px 0; }
+  button.eng { font-size:12px; padding:1px 9px; border-radius:999px; vertical-align:1px; } button.eng.codex { background:var(--ok); border-color:var(--ok); }
   .tag { font-size:11px; padding:1px 8px; border-radius:999px; background:var(--line); margin-right:4px; }
 
   /* ---- scene ---- */
@@ -755,7 +756,12 @@ function hud() {
     const dot = document.createElement('span'); dot.className = 'dot'; dot.style.background = t.shirt; dot.textContent = t.name[0];
     const txt = document.createElement('div');
     const b = document.createElement('b'); b.textContent = t.name;
-    const m = document.createElement('span'); m.className = 'muted'; m.textContent = ` ${t.title} · ${engName(t)}`;
+    const m = document.createElement('span'); m.className = 'muted'; m.textContent = ` ${t.title} · `;
+    const other = engineOf(t.role) === 'claude' ? 'codex' : 'claude';
+    const sw = document.createElement('button'); sw.className = 'eng ' + engineOf(t.role); sw.textContent = engName(t);
+    sw.title = `Runs on ${engName(t)}. Click to switch to ${ENGINE_NAME[other]}${isActive ? ' (from the next run; the current step finishes first)' : ''}.`;
+    sw.onclick = () => post('/api/engine', { role: t.role, engine: other });
+    m.append(sw);
     const d = document.createElement('div'); d.className = 'muted'; d.textContent = (isActive ? '🟢 ' : '') + doing;
     txt.append(b, m, d);
     if (isActive && act.context) txt.append(ctxBar(act.context));
@@ -936,9 +942,6 @@ function drawCard() {
     el('button', { className: 'x', textContent: '×', title: 'Close', onclick: () => { cardRole = null; drawCard(); } }),
     el('h3', { textContent: `${t.name}` }),
     el('div', { className: 'muted', textContent: `${t.title} · ${engName(t)}` }),
-    el('div', { className: 'row', role: 'group', ariaLabel: 'AI engine' }, el('span', { className: 'muted', textContent: '🤖 Runs on' }),
-      ...['claude', 'codex'].map((e) => el('button', { className: engineOf(t.role) === e ? '' : 'ghost', textContent: ENGINE_NAME[e], ariaPressed: String(engineOf(t.role) === e),
-        title: act ? 'Applies from the next run; the current step finishes first' : '', onclick: () => engineOf(t.role) !== e && post('/api/engine', { role: t.role, engine: e }) }))),
     act && act.context ? ctxBar(act.context) : null,
     el('p', { style: 'margin:8px 0 0', textContent: act ? `Working on ${act.label} in ${act.project}.${onBreak ? ' Goes on a break after this step.' : ''}` : onBreak ? 'On a break. New work for this agent waits.' : 'Free. Picks up the next task for this role.' }),
     el('div', { className: 'row' },
