@@ -87,7 +87,7 @@
     <input name="ticketKey" placeholder="RECK-123 or GIF-123" required autocomplete="off">
     <p class="muted beRepo" style="margin:-4px 0 8px">Key must start with RECK- or GIF-</p>
     <textarea name="idea" placeholder="Paste the Jira ticket: summary, type, description, acceptance criteria" required></textarea>
-    <p class="muted" style="margin:0 0 8px">It joins the to-do list. Captain Plan hands it to Rocket Rocco (ReviewCook) or Giggly Gigi (GiftLips), who plans and builds it on a new branch from origin/main. Detective Quinn reviews it, the branch is pushed, and you get a Jira comment plus a Create PR link. You open the draft PR and merge.</p>
+    <p class="muted" style="margin:0 0 8px">It joins the to-do list. Captain Plan plans it, Rocket Rocco (ReviewCook) or Giggly Gigi (GiftLips) builds it on a new branch from origin/main, and Detective Quinn tests it. The branch is pushed, and the 📋 Squad board gives you the Jira comment to copy plus a Create PR link. You open the draft PR and merge.</p>
     <button>Add BE ticket</button>
     <div class="err formErr"></div>
   </form>
@@ -104,6 +104,7 @@ const COLS = [['BACKLOG','Backlog'],['READY','Ready'],['DESIGN','Design'],['IN_P
 const NOTE_HINT = { push: 'Optional note', design: 'What should Iris (UI/UX) change? Required for Request changes', plan: 'Notes for PM/BA (used when you choose Re-plan)', question: 'Optional note (required for "Other")', permission: 'Optional note', blocked: 'Optional instructions for the developer agent on the retry' };
 let S = { projects: [] }, openLog = null, actError = '';
 let sel = null, tab = 'idea'; try { sel = localStorage.getItem('sel'); tab = localStorage.getItem('tab') || 'idea'; } catch {}
+if (location.hash === '#squad') { tab = 'be-ticket'; sel = 'squad-board'; } // link from the office's Squad room
 const kindOf = (p) => p.kind || 'idea';
 const runN = Object.assign(document.createElement('input'), { type: 'number', min: 1, max: 20, value: 1, style: 'width:64px;margin:0' });
 // Forms built once and reused, so the 3-second refresh does not wipe what you type.
@@ -146,6 +147,8 @@ async function refresh() {
   document.getElementById('newBeTicket').hidden = tab !== 'be-ticket';
   const items = S.projects.filter(p => kindOf(p) === tab);
   if (tab === 'be-ticket') items.sort((a, b) => squadRank(a.tasks[0]) - squadRank(b.tasks[0])); // to-do in queue order, then active, blocked, done
+  if (tab === 'be-ticket') list.append(el('div', { className: 'proj' + (sel === SQUAD_BOARD ? ' sel' : ''), onclick: () => { sel = SQUAD_BOARD; try { localStorage.setItem('sel', sel); } catch {} openLog = null; actError = ''; refresh(); } },
+    el('div', { textContent: '📋 Squad board' }), el('div', { className: 'muted', textContent: 'All tickets · copy comments' })));
   if (!items.length) list.append(el('p', { className: 'muted', textContent: tab === 'idea' ? 'No projects yet.' : 'No tickets yet.' }));
   for (const p of items) {
     const waiting = p.decisions.filter(d => !d.answer).length;
@@ -264,6 +267,8 @@ function decisionNode(p, d) {
 
 function render() {
   const main = document.getElementById('main'), p = S.projects.find(x => x.id === sel);
+  if (tab === 'be-ticket' && sel === SQUAD_BOARD) { main.replaceChildren(squadBoard()); return; }
+  if (!p && tab === 'be-ticket') { sel = SQUAD_BOARD; main.replaceChildren(squadBoard()); return; }
   if (!p) { main.replaceChildren(el('p', { className: 'muted', textContent: 'Add or select a project.' })); return; }
   const busy = !!S.busy;
   const open = p.decisions.filter(d => !d.answer), answered = p.decisions.filter(d => d.answer);
@@ -279,7 +284,8 @@ function render() {
       el('button', { className: 'ghost', style: 'background:#fff', textContent: 'Stop', onclick: () => { if (confirm('Stop the running agent? Its task will be marked BLOCKED so you can retry it.')) act('/api/stop'); } })) : null,
     el('div', { className: 'row' }, el('h2', { textContent: p.name }), kindOf(p) === 'ticket' ? el('span', { className: 'pill', textContent: 'Jira ticket' }) : null,
       be ? el('span', { className: 'pill', textContent: 'BE ticket' }) : null, be ? el('span', { className: 'pill', textContent: p.repo }) : null,
-      el('span', { className: 'pill', textContent: be ? beStatus(p.tasks[0]) : p.status })),
+      el('span', { className: 'pill', textContent: be ? beStatus(p.tasks[0]) : p.status }),
+      be ? el('button', { className: 'ghost', textContent: '← Squad board', onclick: () => { sel = SQUAD_BOARD; try { localStorage.setItem('sel', sel); } catch {} openLog = null; refresh(); } }) : null),
     el('p', { className: 'muted', style: 'margin:4px 0', textContent: `${p.path} · branch ${p.branch}` }),
     el('p', { className: 'tokens', style: 'margin:0', textContent: `Tokens used: ${usageText(p.usage)}${p.usage.costUsd ? ' (Claude API-equivalent estimate; your subscription is not billed per token)' : ''}` }),
     p.allowTools.length ? el('p', { className: 'muted', style: 'margin:4px 0', textContent: 'Extra allowed tools: ' + p.allowTools.join(', ') }) : null,
@@ -333,6 +339,41 @@ const squadQueue = () => S.projects.filter(p => kindOf(p) === 'be-ticket').map(p
   .sort((a, b) => (b.priority ?? 0) - (a.priority ?? 0) || (a.queuedAt ?? 0) - (b.queuedAt ?? 0));
 const squadRank = (t) => !t ? 9e15 : t.status === 'TODO' ? squadQueue().indexOf(t) : ({ BLOCKED: 2e15, DONE: 3e15 }[t.status] ?? 1e15);
 const beStatus = (t) => !t ? '' : t.status === 'TODO' ? `TODO · #${squadQueue().indexOf(t) + 1} in queue` : t.status !== 'DONE' ? t.status : t.outcome === 'pushed' ? 'DONE · pushed' : t.outcome === 'push_failed' ? 'DONE · push failed' : t.outcome === 'no_code' ? 'DONE · no code' : 'DONE';
+// Squad board: every squad ticket in columns; finished tickets have their Jira comment one click away.
+const SQUAD_BOARD = 'squad-board';
+const SQUAD_COLS = [['todo', 'To-do', (t) => t.status === 'TODO'], ['work', 'In progress', (t) => ['READY', 'IN_PROGRESS', 'CHANGES_REQUESTED'].includes(t.status)],
+  ['qa', 'QA', (t) => t.status === 'QA'], ['blocked', 'Blocked', (t) => t.status === 'BLOCKED'], ['done', 'Done', (t) => t.status === 'DONE']];
+async function copyText(btn, text, label) {
+  try { await navigator.clipboard.writeText(text); btn.textContent = 'Copied ✓'; } catch { btn.textContent = 'Copy failed: open the ticket and select the text'; }
+  setTimeout(() => { btn.textContent = label; }, 2000);
+}
+function squadBoard() {
+  const tickets = S.projects.filter(p => kindOf(p) === 'be-ticket' && p.tasks[0]).map(p => ({ p, t: p.tasks[0] }))
+    .sort((a, b) => squadRank(a.t) - squadRank(b.t) || String(b.t.dispatchedAt ?? '').localeCompare(String(a.t.dispatchedAt ?? '')));
+  const open = (p) => () => { sel = p.id; try { localStorage.setItem('sel', sel); } catch {} openLog = null; actError = ''; refresh(); };
+  const card = ({ p, t }) => {
+    const waiting = p.decisions.filter(d => !d.answer).length;
+    const copyBtn = t.comment ? el('button', { className: 'ghost', textContent: '📋 Copy comment', style: 'font-size:12px;padding:4px 8px', onclick: (e) => { e.stopPropagation(); copyText(e.target, t.comment, '📋 Copy comment'); } }) : null;
+    return el('div', { className: 'task ' + t.status, style: 'cursor:pointer', title: 'Open this ticket', onclick: open(p) },
+      el('div', {}, el('b', { textContent: t.id }), ' ', el('span', { className: 'pill', textContent: t.owner === 'rc-dev' ? 'Rocco' : 'Gigi' })),
+      el('div', { textContent: t.title, style: 'font-size:13px' }),
+      t.status === 'DONE' ? el('div', { className: 'muted', textContent: beStatus(t) }) : t.status === 'TODO' ? el('div', { className: 'muted', textContent: beStatus(t) }) : null,
+      t.note && t.status !== 'DONE' ? el('div', { className: t.status === 'BLOCKED' ? 'err' : 'muted', style: 'font-size:12px', textContent: t.note.split('\n')[0] }) : null,
+      waiting ? el('div', { className: 'flag', textContent: `⚑ ${waiting} waiting for you` }) : null,
+      copyBtn || (/^https:\/\/github\.com\//.test(t.prUrl ?? '') ? true : null) ? el('div', { className: 'row', style: 'margin-top:6px;gap:6px', onclick: (e) => e.stopPropagation() }, copyBtn,
+        /^https:\/\/github\.com\//.test(t.prUrl ?? '') ? el('a', { href: t.prUrl, target: '_blank', rel: 'noopener', style: 'font-size:12px', textContent: '🔀 Create PR' }) : null) : null);
+  };
+  const done = tickets.filter(x => x.t.status === 'DONE' && x.t.comment);
+  return el('div', {},
+    el('div', { className: 'row' }, el('h2', { textContent: '📋 Squad board' }), el('span', { className: 'pill', textContent: `${tickets.length} ticket(s)` }),
+      done.length ? el('button', { className: 'ghost', textContent: `📋 Copy all ${done.length} done comment(s)`, onclick: (e) => copyText(e.target, done.map(x => x.t.comment).join('\n\n----------\n\n'), `📋 Copy all ${done.length} done comment(s)`) }) : null),
+    el('p', { className: 'muted', textContent: 'Captain Plan plans → Rocco/Gigi build → app runs the tests → Quinn tests → pushed. Click a card for its runs, decisions and full comment.' }),
+    tickets.length ? el('div', { className: 'board' }, ...SQUAD_COLS.map(([, label, match]) => {
+      const list = tickets.filter(x => match(x.t));
+      return el('div', { className: 'col' }, el('h3', { textContent: `${label} (${list.length})` }), ...list.map(card));
+    })) : el('p', { className: 'muted', textContent: 'No squad tickets yet. Add one on the left.' }));
+}
+
 function beCard(p, t) {
   if (!t) return null;
   const branchForm = () => keep(p.id + 'branch', () => {
@@ -377,7 +418,7 @@ async function loadLog() {
 for (const b of document.querySelectorAll('.tabs button')) b.onclick = () => {
   tab = b.dataset.tab; try { localStorage.setItem('tab', tab); } catch {}
   const first = S.projects.find(p => kindOf(p) === tab && p.id === sel) || S.projects.find(p => kindOf(p) === tab);
-  sel = first?.id ?? null; openLog = null; actError = ''; refresh();
+  sel = tab === 'be-ticket' && !first?.id ? SQUAD_BOARD : tab === 'be-ticket' && sel !== first?.id ? SQUAD_BOARD : first?.id ?? null; openLog = null; actError = ''; refresh();
 };
 {
   const form = document.getElementById('newBeTicket'), err = form.querySelector('.formErr'), hint = form.querySelector('.beRepo');
