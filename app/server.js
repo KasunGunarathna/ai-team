@@ -858,13 +858,15 @@ async function shipNow(p) {
   };
   if (as.error) return fail('GitHub login', { err: as.error });
   const sh = (cmd, args, opts) => shOut(cmd, cmd === 'git' ? [...GIT_AS_GH, ...args] : args, opts); // every call as that account
-  const base = /ref: refs\/heads\/(\S+)\s+HEAD/.exec((await sh('git', ['ls-remote', '--symref', 'origin', 'HEAD'], o)).out)?.[1] ?? 'main';
+  const base = 'main'; // always main: a new repo's GitHub default is often the first branch pushed
   let r = await sh('git', ['push', '-u', 'origin', p.branch], o);
   if (!r.ok) return fail('push', r);
   let prUrl = null;
   if (!(await sh('git', ['ls-remote', '--exit-code', '--heads', 'origin', base], o)).ok) { // empty repo: the work so far becomes main
     r = await sh('git', ['push', 'origin', `${p.branch}:refs/heads/${base}`], o);
     if (!r.ok) return fail(`creating ${base}`, r);
+    r = await sh('gh', ['repo', 'edit', '--default-branch', base], o); // so PRs and clones use main
+    if (!r.ok) say(`⚠ [${p.name}] could not make ${base} the default branch on GitHub: ${clip(r.err, 200)}`);
   } else {
     r = await sh('git', ['fetch', '-q', 'origin', base], o);
     if (!r.ok) return fail('fetch', r);
