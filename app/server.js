@@ -287,7 +287,8 @@ const QA_LOCAL_RULE = 'Check them with `docker ps` (and `docker logs <container>
   'You may set the app up locally to test it: use only the test environment (.env.test or the test DB), run migrations against the test DB, start the backend in the background and call it on localhost (API tests, or a short node fetch script). ' +
   'Never reset or drop a non-test database or touch .env.staging/.env.production. Stop only the processes you started. ' +
   'If anything blocks the setup (Docker not running, a service down, a missing secret, a port in use), stop and report VERDICT: BLOCKED naming exactly what is needed, so the owner can fix or approve it and re-run the testing.';
-const sh = (cmd, args, opts = {}) => new Promise((res) => execFile(cmd, args, { timeout: 180_000, maxBuffer: 10e6, ...opts }, (e, out, err) => res({ ok: !e, out: String(out ?? ''), err: String(err || e?.message || '') })));
+const sh = (cmd, args, opts = {}) => shOut(cmd, args, opts);
+const shOut = (cmd, args, opts = {}) => new Promise((res) => execFile(cmd, args, { timeout: 180_000, maxBuffer: 10e6, ...opts }, (e, out, err) => res({ ok: !e, out: String(out ?? ''), err: String(err || e?.message || '') })));
 const COMPOSE_FILES = ['docker-compose.yml', 'docker-compose.yaml', 'compose.yml', 'compose.yaml'];
 // The app is the team's devops: before tests and QA it starts Docker if needed and brings the project's services up.
 // Squad repos use the owner's main checkout (and its containers). Other projects use the task's compose file under one
@@ -425,6 +426,10 @@ function applyAnswer(p, d, value, note) {
     return startPlan(p);
   }
   if (d.kind === 'blocked') { retryTask(p, p.tasks.find((x) => x.id === d.taskId), value, note); kick(); }
+  if (d.kind === 'tomain') {
+    if (value === 'manual') { p.toMain = { ok: true, manual: true, at: now() }; say(`⇪ [${p.name}] you merged into main yourself`); kick(); return; }
+    shipToMain(p).then((ok) => ok && kick()).catch((e) => say(`⚠ [${p.name}] merge to main failed: ${clip(e.message, 300)}`));
+  }
   if (d.kind === 'push') {
     const t = p.tasks.find((x) => x.id === d.taskId);
     if (value === 'manual') { t.note = `${t.note ? `${t.note}. ` : ''}You chose to push yourself`; return; }
@@ -712,6 +717,7 @@ async function runTask(p, t, job) {
       Object.assign(t, { status: 'DONE', instructions: null, feedback: null, cycles: 0 });
       save();
       say(`✓ [${p.name}] ${t.id} DONE · merged into ${p.branch}`);
+      await shipToMain(p);
       return true;
     }
     if (verdict === 'BLOCKED') return block(p, t, `QA reported BLOCKED (missing tooling, environment or unclear criteria). Fix or approve it, add a note for QA if needed, then choose "re-run only the testing":\n\n${clip(report, 1500)}`, true);
@@ -821,6 +827,69 @@ function removeBeWorktree(p, t) {
   }
 }
 
+// Main team: after each merged task the app pushes the work branch and merges it into the repo's default branch through
+// one PR (gh, your GitHub login), then fast-forwards the work branch to it, so the next task starts from main.
+// While that fails, p.toMain.ok is false: no new task starts in the project until you retry or merge it yourself.
+// Main-team projects push, open and merge PRs as KasunGunarathna (squad repos use the keychain login kasun-gx, see pushBranch).
+// The token comes from gh for that account and reaches git only through gh's credential helper; hooks are off for these calls.
+const GH_USER = { main: process.env.AI_TEAM_GH_MAIN || 'KasunGunarathna' };
+const GIT_AS_GH = ['-c', 'credential.helper=', '-c', 'credential.helper=!gh auth git-credential', '-c', 'core.hooksPath=/dev/null'];
+async function ghAs(p) {
+  const user = GH_USER[poolOf(p)];
+  const r = await sh('gh', ['auth', 'token', '--user', user], { env: NO_PROMPT });
+  return r.ok && r.out.trim() ? { user, env: { ...NO_PROMPT, GH_TOKEN: r.out.trim() } }
+    : { user, error: `GitHub account ${user} is not logged in to gh. Run \`gh auth login\` and sign in as ${user}, then retry.` };
+}
+const shipping = new Map(); // project id -> promise, so two tasks finishing together ship one after the other
+function shipToMain(p) {
+  const next = (shipping.get(p.id) ?? Promise.resolve()).then(() => shipNow(p));
+  shipping.set(p.id, next.catch(() => {}));
+  return next;
+}
+async function shipNow(p) {
+  const dir = integrationDir(p), as = await ghAs(p), o = { cwd: dir, env: as.env };
+  const fail = (step, r) => {
+    p.toMain = { ok: false, error: `${step} failed: ${clip(r.err || r.out, 1500)}`, at: now() };
+    p.decisions = p.decisions.filter((d) => !(d.kind === 'tomain' && !d.answer));
+    addDecision(p, { kind: 'tomain', question: `Could not merge ${p.branch} into main. New tasks in ${p.name} wait until it is merged.`, detail: p.toMain.error,
+      options: [['retry', 'Retry push and merge'], ['manual', 'I merged it into main myself: continue']] });
+    save(); say(`✗ [${p.name}] merge to main: ${p.toMain.error.split('\n')[0]}`);
+    return false;
+  };
+  if (as.error) return fail('GitHub login', { err: as.error });
+  const sh = (cmd, args, opts) => shOut(cmd, cmd === 'git' ? [...GIT_AS_GH, ...args] : args, opts); // every call as that account
+  const base = /ref: refs\/heads\/(\S+)\s+HEAD/.exec((await sh('git', ['ls-remote', '--symref', 'origin', 'HEAD'], o)).out)?.[1] ?? 'main';
+  let r = await sh('git', ['push', '-u', 'origin', p.branch], o);
+  if (!r.ok) return fail('push', r);
+  let prUrl = null;
+  if (!(await sh('git', ['ls-remote', '--exit-code', '--heads', 'origin', base], o)).ok) { // empty repo: the work so far becomes main
+    r = await sh('git', ['push', 'origin', `${p.branch}:refs/heads/${base}`], o);
+    if (!r.ok) return fail(`creating ${base}`, r);
+  } else {
+    r = await sh('git', ['fetch', '-q', 'origin', base], o);
+    if (!r.ok) return fail('fetch', r);
+    if (git(dir, 'rev-list', '--count', `origin/${base}..${p.branch}`) !== '0') {
+      prUrl = (await sh('gh', ['pr', 'list', '--head', p.branch, '--base', base, '--state', 'open', '--json', 'url', '-q', '.[0].url'], o)).out.trim() || null;
+      if (!prUrl) {
+        const done = p.tasks.filter((t) => t.status === 'DONE').map((t) => `- ${t.id}: ${t.title}`).join('\n');
+        r = await sh('gh', ['pr', 'create', '--base', base, '--head', p.branch, '--title', `AI Team: ${p.name}`, '--body', `Merged automatically by AI Team after QA passed.\n\nDone tasks:\n${done}`], o);
+        if (!r.ok) return fail('opening the PR', r);
+        prUrl = r.out.trim().split('\n').pop();
+      }
+      r = await sh('gh', ['pr', 'merge', prUrl, '--merge'], o);
+      if (!r.ok) return fail(`merging ${prUrl}`, r);
+    }
+  }
+  r = await sh('git', ['fetch', '-q', 'origin', base], o);
+  if (r.ok) r = await sh('git', ['merge', '--ff-only', '-q', `origin/${base}`], o); // next task starts from main
+  if (!r.ok) return fail(`updating ${p.branch} from ${base}`, r);
+  p.toMain = { ok: true, base, prUrl, user: as.user, at: now() };
+  p.decisions = p.decisions.filter((d) => !(d.kind === 'tomain' && !d.answer));
+  save(); say(`⇪ [${p.name}] merged into ${base} as ${as.user}${prUrl ? ` · ${prUrl}` : ''}`);
+  return true;
+}
+
+// Squad repos push with the keychain login (kasun-gx); QRTiger does not accept the gh OAuth token.
 function pushBranch(p) {
   return new Promise((resolve) => execFile('git', ['push', '-u', 'origin', p.branch], { cwd: p.path, env: NO_PROMPT, timeout: 120_000 }, (err, _out, stderr) => {
     if (err) return resolve({ ok: false, error: String(stderr || err.message).trim() });
@@ -1153,7 +1222,7 @@ function startNext(team) {
     }
   }
   for (const p of mine.filter(inFocus)) {
-    if (p.status !== 'APPROVED' || p.resumePlan || !(p.auto || p.runBudget > 0) || p.tasks.some((t) => t.status === 'BLOCKED')) continue;
+    if (p.status !== 'APPROVED' || p.resumePlan || !(p.auto || p.runBudget > 0) || p.tasks.some((t) => t.status === 'BLOCKED') || p.toMain?.ok === false) continue;
     if (projectJobs(p).some((j) => j.kind === 'plan')) continue;
     const t = readyTasks(p.tasks).find((x) => roleFree(needsDesign(x) ? 'ui-ux' : x.skipDev ? 'qa' : x.owner));
     if (!t) continue;
