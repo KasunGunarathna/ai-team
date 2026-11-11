@@ -374,7 +374,7 @@
   </section>
 </div>
 
-<section class="usage" aria-label="Weekly plan usage">
+<section class="usage" aria-label="Plan usage">
   <div class="ucard" id="u-claude"></div>
   <div class="ucard" id="u-codex"></div>
 </section>
@@ -794,7 +794,7 @@ function drawUsage() {
     const left = u?.week ? Math.max(0, 100 - u.week.pct) : null;
     const color = left == null ? 'var(--muted)' : left <= 10 ? 'var(--bad)' : left <= 30 ? 'var(--warn)' : 'var(--ok)';
     const top = document.createElement('div'); top.className = 'top';
-    const title = document.createElement('b'); title.textContent = `${key === 'claude' ? '🟣' : '🟢'} ${name} · weekly & daily`;
+    const title = document.createElement('b'); title.textContent = `${key === 'claude' ? '🟣' : '🟢'} ${name} · session, weekly & daily`;
     const big = document.createElement('span'); big.className = 'big'; big.style.color = color;
     big.textContent = left == null ? 'no data yet' : `${left}% left`;
     top.append(title, big);
@@ -802,7 +802,21 @@ function drawUsage() {
     const fill = document.createElement('div'); fill.style.width = `${u?.week ? Math.min(100, u.week.pct) : 0}%`; fill.style.background = color;
     bar.append(fill);
     const l1 = document.createElement('div'); l1.className = 'muted';
-    l1.textContent = u?.week ? `${u.week.pct}% used${u.week.resetsAt ? ` · resets ${when(u.week.resetsAt)}` : ''}${u.fiveHour ? ` · 5-hour window ${u.fiveHour.pct}% used` : ''}` : `Shows after the first ${name} run.`;
+    l1.textContent = u?.week ? `${u.week.pct}% used${u.week.resetsAt ? ` · resets ${when(u.week.resetsAt)}` : ''}` : `Shows after the first ${name} run.`;
+    // Session (5hr): a window whose reset time has passed says nothing about current use, so it is not shown as a percentage.
+    const s = u?.fiveHour, expired = s?.resetsAt && s.resetsAt <= Date.now(), live = s && !expired;
+    const sPct = live ? Math.round(s.pct) : null;
+    const sColor = sPct == null ? 'var(--muted)' : sPct >= 90 ? 'var(--bad)' : sPct >= 70 ? 'var(--warn)' : 'var(--ok)';
+    const sTop = document.createElement('div'); sTop.className = 'top'; sTop.style.marginTop = '8px';
+    const sTitle = document.createElement('b'); sTitle.textContent = 'Session (5hr)';
+    const sBig = document.createElement('span'); sBig.className = 'big'; sBig.style.color = sColor;
+    sBig.textContent = live ? `${sPct}%` : '—';
+    sTop.append(sTitle, sBig);
+    const sBar = document.createElement('div'); sBar.className = 'ubar';
+    const sFill = document.createElement('div'); sFill.style.width = `${live ? Math.min(100, sPct) : 0}%`; sFill.style.background = sColor;
+    sBar.append(sFill);
+    const sLine = document.createElement('div'); sLine.className = 'muted';
+    sLine.textContent = live ? (s.resetsAt ? `Resets at ${new Date(s.resetsAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}` : 'Reset time unknown') : expired ? `Window has reset · updates on the next ${name} run` : `Shows after the first ${name} run.`;
     const l2 = document.createElement('div'); l2.className = 'muted';
     const tk = u?.tokens;
     l2.textContent = `AI Team used ${fmtTok(tk?.total ?? 0)} tokens this week (${fmtTok(tk?.out ?? 0)} output, ${tk?.runs ?? 0} runs) · ${who}${u?.at ? ` · as of ${new Date(u.at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` : ''}`;
@@ -820,7 +834,7 @@ function drawUsage() {
       const lab = document.createElement('span'); lab.textContent = new Date(Date.now() - (days.length - 1 - i) * 86_400_000).toLocaleDateString([], { weekday: 'narrow' });
       col.append(b, lab); chart.append(col);
     });
-    card.replaceChildren(top, bar, l1, l2, l3, chart);
+    card.replaceChildren(top, bar, l1, sTop, sBar, sLine, l2, l3, chart);
   }
 }
 

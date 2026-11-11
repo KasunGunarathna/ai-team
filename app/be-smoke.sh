@@ -19,10 +19,10 @@ done
 git -C "$tmp/reck" push -q origin HEAD:refs/heads/RECK-116
 before=$(git -C "$tmp/reck" status --porcelain)
 
-AI_TEAM_DATA="$tmp/data" PORT=$PORT DAILY_AT= RECK_API_DIR="$tmp/reck" GIF_API_DIR="$tmp/gif" LOG_AGENT=0 node app/server.js >"$tmp/server.log" 2>&1 &
+AI_TEAM_DATA="$tmp/data" PORT=$PORT DAILY_AT= RECK_API_DIR="$tmp/reck" GIF_API_DIR="$tmp/gif" node app/server.js >"$tmp/server.log" 2>&1 &
 pid=$!
 for _ in $(seq 50); do curl -sf "$URL/api/state" >/dev/null 2>&1 && break; sleep 0.2; done
-curl -sf "$URL/api/state" >/dev/null || fail "server did not start: $(cat "$tmp/server.log")"
+curl -sf "$URL/api/state" >/dev/null || fail "server did not start: $(cat "$tmp/server.log" "$tmp/data/logs/server.log" 2>/dev/null)"
 
 post() { curl -s -o "$tmp/body" -w '%{http_code}' -H 'Content-Type: application/json' -d "$2" "$URL$1"; }
 for role in rc-dev gl-dev; do

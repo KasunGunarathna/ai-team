@@ -10,6 +10,7 @@ import { REF_TYPES, isImageRef, refFileName, parseFigmaUrl, TASK_ID, authFailure
 
 const ROOT = path.resolve(import.meta.dirname, '..');
 const DATA = process.env.AI_TEAM_DATA || path.join(ROOT, 'data');
+fs.mkdirSync(path.join(DATA, 'logs'), { recursive: true });
 const STATE_FILE = path.join(DATA, 'state.json');
 const PORT = Number(process.env.PORT || 4317);
 const DAILY_AT = process.env.DAILY_AT ?? '09:00'; // "" disables the daily run
@@ -79,7 +80,6 @@ const DEV_TOOLS = [
 ];
 
 // ---------- state ----------
-fs.mkdirSync(path.join(DATA, 'logs'), { recursive: true });
 const state = fs.existsSync(STATE_FILE) ? JSON.parse(fs.readFileSync(STATE_FILE, 'utf8')) : { projects: [] };
 state.breaks ??= {}; // role -> true while that agent is on a break
 state.contextWindows ??= {}; // model -> context window size learned from earlier runs
@@ -167,9 +167,8 @@ function pastTickets(repo) {
 }
 function now() { return new Date().toISOString(); }
 
-// Terminal log. LOG_AGENT=0 hides the agents' own output lines and keeps workflow events.
-const SHOW_AGENT = process.env.LOG_AGENT !== '0';
-function say(msg) { console.log(`${new Date().toTimeString().slice(0, 8)}  ${msg}`); }
+// Workflow event log. Synchronous so a message written just before process.exit is kept; a failed write must not stop a job.
+function say(msg) { try { fs.appendFileSync(path.join(DATA, 'logs', 'server.log'), `${now()}  ${msg}\n`); } catch { /* log only */ } }
 const tok = (u) => !u ? 'no token data' : `tokens in ${u.input} · cache ${u.cacheRead + u.cacheWrite} · out ${u.output}${u.costUsd ? ` · ≈$${u.costUsd.toFixed(2)}` : ''}`;
 
 // Stop an agent and everything it started: SIGTERM to its process group, SIGKILL 5 s later if anything is left.
@@ -181,7 +180,7 @@ function killTree(child) {
 }
 
 // Spawn an agent CLI that prints JSON lines; write a readable log as events arrive.
-function run(cmd, args, cwd, logFile, format, tag, job, onEvent) {
+function run(cmd, args, cwd, logFile, format, job, onEvent) {
   return new Promise((resolve) => {
     const acc = { usage: null, text: '', denials: [], stderr: '' };
     const log = fs.createWriteStream(logFile, { flags: 'a' });
@@ -191,7 +190,6 @@ function run(cmd, args, cwd, logFile, format, tag, job, onEvent) {
       try { out = format(JSON.parse(line), acc); onEvent?.(acc); } catch { out = line; }
       if (!out) return;
       log.write(out + '\n');
-      if (SHOW_AGENT) for (const l of out.split('\n')) if (l.trim()) console.log(`          ${tag} ${clip(l, 220)}`);
     };
     // Own process group, so stopping the agent also stops what it started (test runners, dev servers).
     const child = spawn(cmd, args, { cwd, stdio: ['ignore', 'pipe', 'pipe'], detached: true });
@@ -202,7 +200,7 @@ function run(cmd, args, cwd, logFile, format, tag, job, onEvent) {
       buf += d;
       for (let i; (i = buf.indexOf('\n')) >= 0; buf = buf.slice(i + 1)) writeLine(buf.slice(0, i));
     });
-    child.stderr.on('data', (d) => { log.write(d); acc.stderr = (acc.stderr + d).slice(-2000); if (SHOW_AGENT) process.stderr.write(`          ${tag} [stderr] ${clip(String(d), 220)}\n`); });
+    child.stderr.on('data', (d) => { log.write(d); acc.stderr = (acc.stderr + d).slice(-2000); });
     child.on('error', (e) => log.write(`\n[spawn error] ${e.message}\n`));
     child.on('close', (code) => {
       clearTimeout(timer);
@@ -251,7 +249,7 @@ async function agentRun(p, owner, label, engine, args, job, cwd = p.path, handof
     const c = codexFile && codexLiveContext(codexFile);
     if (c) job.context = { used: c.used, window: c.window, pct: Math.min(100, Math.round((100 * c.used) / c.window)), model: 'codex' };
   }, 5000) : null;
-  const r = await run(engine, args, cwd, path.join(dir, log), engine === 'claude' ? formatClaudeEvent : formatCodexEvent, `│ ${label}`, job, onEvent);
+  const r = await run(engine, args, cwd, path.join(dir, log), engine === 'claude' ? formatClaudeEvent : formatCodexEvent, job, onEvent);
   clearInterval(codexPoll);
   if (r.model && r.window) state.contextWindows[r.model] = r.window;
   const handedOff = !!job.handoff;
@@ -1521,9 +1519,8 @@ for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, () => {
   setTimeout(() => { for (const j of jobs.values()) try { process.kill(-j.child.pid, 'SIGKILL'); } catch { /* gone */ } process.exit(0); }, jobs.size ? 1500 : 0);
 });
 
-server.on('error', (e) => { console.error(e.code === 'EADDRINUSE' ? `Port ${PORT} is already in use. Is AI Team already running? Stop it or use PORT=<other>.` : e); process.exit(1); });
+server.on('error', (e) => { say(e.code === 'EADDRINUSE' ? `Port ${PORT} is already in use. Is AI Team already running? Stop it or use PORT=<other>.` : e.stack || e.message); process.exit(1); });
 server.listen(PORT, '127.0.0.1', () => {
-  console.log(`AI Team running at http://localhost:${PORT}  (up to ${MAX_AGENTS} agents at once, daily run: ${DAILY_AT || 'off'}, ${DAILY_TASKS} tasks/project)`);
-  console.log(`Logging workflow events${SHOW_AGENT ? ' and agent output (LOG_AGENT=0 to hide agent output)' : ''}. Press Ctrl+C to stop.`);
+  say(`AI Team running at http://localhost:${PORT}  (up to ${MAX_AGENTS} agents at once, daily run: ${DAILY_AT || 'off'}, ${DAILY_TASKS} tasks/project)`);
   for (const p of state.projects) say(`  ${p.name}: ${p.status} · ${p.tasks.filter((t) => t.status === 'DONE').length}/${p.tasks.length} done · ${pending(p).length} waiting for you`);
 });

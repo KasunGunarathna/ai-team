@@ -16,9 +16,9 @@ npm start            # http://localhost:4317
 npm test             # orchestrator logic tests
 ```
 
-Options (environment variables): `PORT=4317`, `DAILY_AT=09:00` (set it to an empty value to turn the daily run off), `DAILY_TASKS=2`, `LOG_AGENT=0` (hide the agents' own output in the terminal and keep only workflow events).
+Options (environment variables): `PORT=4317`, `DAILY_AT=09:00` (set it to an empty value to turn the daily run off), `DAILY_TASKS=2`.
 
-The terminal shows what the app is doing: projects added, planning, every agent run starting and ending with its duration and tokens, QA verdicts, commits, blocked tasks, and decisions waiting for you or answered by you. Keep the terminal open: closing it, or pressing Ctrl+C, stops the app and the daily run.
+The app prints nothing to the terminal. `data/logs/server.log` records what the app is doing: startup errors, projects added, planning, every agent run starting and ending with its duration and tokens, QA verdicts, commits, blocked tasks, and decisions waiting for you or answered by you. Keep the terminal open: closing it, or pressing Ctrl+C, stops the app and the daily run.
 
 ## Flow
 

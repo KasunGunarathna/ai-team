@@ -132,7 +132,8 @@ async function refresh() {
   S = await api('/api/state');
   AiSounds.watch(S);
   document.getElementById('teaBtn').textContent = S.teaBreak ? '▶ Back to work' : '☕ Team tea break';
-  const wk = (u, n) => `${n} weekly: ${u?.week ? `${Math.max(0, 100 - u.week.pct)}% left` : 'no data yet'}`;
+  const session = (s) => !s || (s.resetsAt && s.resetsAt <= Date.now()) ? 'no current data' : `${Math.round(s.pct)}%${s.resetsAt ? `, resets at ${hhmm(s.resetsAt)}` : ''}`;
+  const wk = (u, n) => `${n} session (5hr): ${session(u?.fiveHour)}, weekly: ${u?.week ? `${Math.max(0, 100 - u.week.pct)}% left` : 'no data yet'}`;
   document.getElementById('usage').textContent = `${wk(S.weekly?.claude, 'Claude')} · ${wk(S.weekly?.codex, 'Codex')}`;
   document.getElementById('daily').textContent = S.dailyAt ? `Daily run at ${S.dailyAt}: ${S.dailyTasks} task(s) per approved project, while this app is running.` : 'Daily run off.';
   const list = document.getElementById('projects'); list.replaceChildren();
