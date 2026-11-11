@@ -811,17 +811,21 @@ function runTests(p, t, wt, label, job) {
   t.runs.push(rec); save();
   say(`▶ [${p.name}] ${rec.label}: npm test (app)`);
   const t0 = Date.now();
+  // Shown in the office: the dev for the baseline, Quinn for the runs after a build.
+  job.appRun = { label: rec.label, who: label === 'baseline' ? t.owner : 'be-qa', startedAt: rec.startedAt };
   return new Promise((resolve) => {
     let text = '';
+    const live = fs.createWriteStream(path.join(dir, log)); // written as it runs, so the board's log viewer shows progress
+    live.write(`$ npm test -- --json --outputFile=${out}\n\n`);
     const child = spawn('npm', ['test', '--', '--json', `--outputFile=${out}`], { cwd: wt, env: TEST_ENV, stdio: ['ignore', 'pipe', 'pipe'], detached: true });
     job.child = child; // so Stop kills the test run too
-    const timer = setTimeout(() => { text += '\n[timeout: killed]\n'; killTree(child); }, TEST_TIMEOUT_MS);
-    const keep = (d) => { text = (text + d).slice(-200_000); };
+    const timer = setTimeout(() => { text += '\n[timeout: killed]\n'; live.write('\n[timeout: killed]\n'); killTree(child); }, TEST_TIMEOUT_MS);
+    const keep = (d) => { text = (text + d).slice(-200_000); live.write(d); };
     child.stdout.on('data', keep); child.stderr.on('data', keep);
     child.on('error', (e) => keep(`\n[spawn error] ${e.message}\n`));
     child.on('close', (code) => {
-      clearTimeout(timer); job.child = null;
-      fs.writeFileSync(path.join(dir, log), `$ npm test -- --json --outputFile=${out}\n\n${text}\n[exit ${code}]\n`);
+      clearTimeout(timer); job.child = null; job.appRun = null;
+      live.end(`\n[exit ${code}]\n`);
       let json = null;
       try { json = JSON.parse(fs.readFileSync(out, 'utf8')); } catch { /* no or invalid result file: the suite did not run */ }
       const output = text.slice(-8000);
@@ -1205,8 +1209,8 @@ const server = http.createServer(async (req, res) => {
       res.writeHead(200, { 'Content-Type': 'text/markdown; charset=utf-8', 'Content-Disposition': `attachment; filename="${file}"` });
       return res.end(fs.readFileSync(path.join(ROOT, 'templates', file)));
     }
-    if (req.method === 'GET' && url.pathname === '/api/state') return send(res, 200, { busy: busyText(), busyProjects: [...new Set([...jobs.values()].map((j) => j.projectId))], maxAgents: MAX_AGENTS, focus: state.focus || null, breaks: state.breaks,
-      jobs: [...jobs.values()].map(({ id, kind, projectId, project, taskId, label, role, agentLabel, agentStartedAt, needs, context }) => ({ id, kind, projectId, project, taskId, label, role, agentLabel, agentStartedAt, needs, context })),
+    if (req.method === 'GET' && url.pathname === '/api/state') return send(res, 200, { busy: busyText(), busyProjects: [...new Set([...jobs.values()].map((j) => j.projectId))], maxAgents: MAX_AGENTS, squadMax: BE_MAX, focus: state.focus || null, breaks: state.breaks,
+      jobs: [...jobs.values()].map(({ id, kind, team, projectId, project, taskId, label, role, agentLabel, agentStartedAt, needs, context, appRun }) => ({ id, kind, team, projectId, project, taskId, label, role, agentLabel, agentStartedAt, needs, context, appRun })),
       handoffAt: HANDOFF_AT,
       teaBreak: !!state.teaBreak, workHours: state.workHours || null, open: isOpen(state.workHours), weekly: weeklyUsage(), limits: state.limits, authFail: state.authFail, claudeUsage: state.claudeUsage || null, dailyAt: DAILY_AT, dailyTasks: DAILY_TASKS, projects: state.projects.map(view) });
 

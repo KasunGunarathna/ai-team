@@ -577,12 +577,14 @@ let handoff = null;
 // The job an agent is working on right now, shaped like { label, project, projectId, startedAt }.
 function activeFor(role) {
   const j = S.jobs.find((x) => x.role === role);
-  return j && { label: j.agentLabel, project: j.project, projectId: j.projectId, startedAt: j.agentStartedAt, context: j.context };
+  if (j) return { label: j.agentLabel, project: j.project, projectId: j.projectId, startedAt: j.agentStartedAt, context: j.context };
+  const a = S.jobs.find((x) => x.appRun?.who === role); // the app runs the test suite; show the agent who owns that step
+  return a && { label: a.appRun.label, project: a.project, projectId: a.projectId, startedAt: a.appRun.startedAt, context: null, tests: true };
 }
 
 function taskTitle(active) {
   const p = S.projects.find((x) => x.id === active.projectId);
-  const id = active.label.replace(/-(dev|qa|baseline|plan|testplan)(-\d+)?(-s\d+)?$/, '');
+  const id = active.label.replace(/-(dev|qa|baseline|plan|testplan|tests)(-\d+)?(-s\d+)?$/, '');
   return p?.tasks.find((t) => t.id === id)?.title ?? '';
 }
 
@@ -613,8 +615,8 @@ function update() {
 
     if (isActive) {
       if (t.role === 'squad-pm') place(t, SQUAD_BOARD.x, SQUAD_BOARD.y, 'board', first); else place(t, deskX(t), SEAT_Y + (inSquad(t) ? SQUAD_DY : 0), 'desk', first);
-      const id = act.label.replace(/-(dev|qa|baseline|plan|testplan)(-\d+)?(-s\d+)?$/, '');
-      const verb = t.role === 'squad-pm' ? '📝 Planning' : /-testplan$/.test(act.label) ? '🧪 Reviewing test plan' : t.role === 'qa' || t.role === 'be-qa' ? '🔍 Testing' : t.role === 'pm-ba' ? '📝 Planning' : t.role === 'ui-ux' ? '🎨 Designing' : '⌨️ Coding';
+      const id = act.label.replace(/-(dev|qa|baseline|plan|testplan|tests)(-\d+)?(-s\d+)?$/, '');
+      const verb = act.tests ? (/-baseline$/.test(act.label) ? '🧪 Baseline tests' : '🧪 Running tests') : t.role === 'squad-pm' ? '📝 Planning' : /-testplan$/.test(act.label) ? '🧪 Reviewing test plan' : t.role === 'qa' || t.role === 'be-qa' ? '🔍 Testing' : t.role === 'pm-ba' ? '📝 Planning' : t.role === 'ui-ux' ? '🎨 Designing' : '⌨️ Coding';
       speak(t, t.role === 'pm-ba' ? `${verb} ${clip(act.project, 22)}` : `${verb} ${id}${taskTitle(act) ? ' · ' + clip(taskTitle(act), 22) : ''}`);
     } else if (!S.open) {
       speak(t, '');
@@ -711,7 +713,8 @@ function hud() {
   $('reader').classList.toggle('fail', outages.some((o) => o.auth));
   drawOutage(outages);
   $('teaBtn').textContent = S.teaBreak ? '▶ Back to work' : '☕ Team tea break';
-  $('workChip').textContent = `👥 Working ${S.jobs.filter((j) => j.role).length}/${S.maxAgents}`;
+  const busyIn = (team) => S.jobs.filter((j) => (j.team ?? 'main') === team).length; // jobs, including the app's own test runs
+  $('workChip').textContent = `👥 Team ${busyIn('main')}/${S.maxAgents} · 🦸 Squad ${busyIn('be')}/${S.squadMax ?? 3}`;
   const fp = S.projects.find((x) => x.id === S.focus);
   $('focusChip').hidden = !fp;
   if (fp) $('focusChip').textContent = `🎯 Focus: ${fp.name} ✕`;
