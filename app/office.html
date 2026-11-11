@@ -56,7 +56,12 @@
   .decision input[type=radio] { margin-top:4px; }
   .decision textarea { width:100%; min-height:56px; font:inherit; padding:6px 8px; border-radius:8px; border:1px solid var(--line); background:var(--card); color:inherit; margin:6px 0; }
   .decision pre { white-space:pre-wrap; font-size:12px; max-height:160px; overflow:auto; background:var(--card); border-radius:8px; padding:8px; margin:6px 0; }
-  button.eng { font-size:12px; padding:1px 9px; border-radius:999px; vertical-align:1px; } button.eng.codex { background:var(--ok); border-color:var(--ok); }
+  button.eng { display:inline-flex; align-items:center; gap:6px; font-size:12px; padding:2px 4px; border:none; background:none; color:var(--muted); vertical-align:-3px; }
+  button.eng .track { position:relative; width:34px; height:18px; border-radius:9px; background:#7950f2; transition:background .2s; }
+  button.eng .knob { position:absolute; top:2px; left:2px; width:14px; height:14px; border-radius:50%; background:#fff; box-shadow:0 1px 2px #0004; transition:left .2s; }
+  button.eng.codex .track { background:#2f9e44; } button.eng.codex .knob { left:18px; }
+  button.eng.claude .l, button.eng.codex .r { color:var(--ink); font-weight:800; }
+  button.eng:focus-visible { outline:2px solid var(--accent); outline-offset:2px; border-radius:6px; }
   .tag { font-size:11px; padding:1px 8px; border-radius:999px; background:var(--line); margin-right:4px; }
 
   /* ---- scene ---- */
@@ -758,9 +763,13 @@ function hud() {
     const b = document.createElement('b'); b.textContent = t.name;
     const m = document.createElement('span'); m.className = 'muted'; m.textContent = ` ${t.title} · `;
     const other = engineOf(t.role) === 'claude' ? 'codex' : 'claude';
-    const sw = document.createElement('button'); sw.className = 'eng ' + engineOf(t.role); sw.textContent = engName(t);
+    // Claude ◯━ Codex switch: off = Claude, on = Codex
+    const sw = document.createElement('button'); sw.type = 'button'; sw.className = 'eng ' + engineOf(t.role);
+    sw.setAttribute('role', 'switch'); sw.setAttribute('aria-checked', String(engineOf(t.role) === 'codex'));
+    sw.setAttribute('aria-label', `${t.name} runs on Codex (off: Claude)`);
     sw.title = `Runs on ${engName(t)}. Click to switch to ${ENGINE_NAME[other]}${isActive ? ' (from the next run; the current step finishes first)' : ''}.`;
-    sw.onclick = () => post('/api/engine', { role: t.role, engine: other });
+    sw.innerHTML = '<span class="l">Claude</span><span class="track"><span class="knob"></span></span><span class="r">Codex</span>';
+    sw.onclick = () => { sw.className = 'eng ' + other; sw.disabled = true; post('/api/engine', { role: t.role, engine: other }); };
     m.append(sw);
     const d = document.createElement('div'); d.className = 'muted'; d.textContent = (isActive ? '🟢 ' : '') + doing;
     txt.append(b, m, d);
