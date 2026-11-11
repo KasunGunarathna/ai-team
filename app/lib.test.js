@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseVerdict, nextTask, normaliseTasks, normaliseQuestions, secretFiles, formatClaudeEvent, formatCodexEvent, sumUsage, permissionRule, repoForKey, githubTreeUrl, summarySections, parseBaseline, commitType, ticketTitle, jiraComment, poolOf, newestVersion, jestFailures, isTestHarness, prLinkFromPush, squadNext, tokensByDay, codexContext } from './lib.js';
+import { parseVerdict, nextTask, normaliseTasks, normaliseQuestions, secretFiles, formatClaudeEvent, formatCodexEvent, sumUsage, permissionRule, repoForKey, githubTreeUrl, summarySections, parseBaseline, commitType, ticketTitle, jiraComment, poolOf, newestVersion, jestFailures, isTestHarness, prLinkFromPush, squadNext, tokensByDay, codexContext, unsafeCompose } from './lib.js';
 
 test('parseVerdict takes the last verdict and defaults to BLOCKED', () => {
   assert.equal(parseVerdict('blah\nVERDICT: PASS'), 'PASS');
@@ -278,4 +278,12 @@ test('codexContext reads the latest context use from a Codex session log', () =>
   assert.deepEqual(codexContext([tc(1000, 258400), '{"type":"x"}', tc(46111, 258400), ''].join('\n')), { used: 46111, window: 258400 });
   assert.equal(codexContext('{"type":"event_msg","payload":{"type":"token_count","info":null}}'), null);
   assert.equal(codexContext('garbage'), null);
+});
+
+test('unsafeCompose flags keys outside the allowlist and mounts outside the project', () => {
+  const id = (x) => x;
+  const ok = { services: { db: { image: 'postgres:16', ports: [], volumes: [{ type: 'volume', source: 'pg', target: '/d' }, { type: 'bind', source: '/w/app/init.sql', target: '/i' }] } }, volumes: { pg: {} } };
+  assert.deepEqual(unsafeCompose(ok, '/w/app', id), []);
+  const bad = { services: { x: { image: 'a', privileged: true, network_mode: 'host', volumes: [{ type: 'bind', source: '/var/run/docker.sock', target: '/s' }, { type: 'bind', source: '/w/app-evil', target: '/o' }] } }, secrets: { k: {} }, volumes: { v: { driver: 'local', driver_opts: { device: '/' } } } };
+  assert.deepEqual(unsafeCompose(bad, '/w/app', id), ['top-level secrets', 'volume v: custom driver', 'x: privileged', 'x: network_mode', 'x: mounts /var/run/docker.sock', 'x: mounts /w/app-evil']);
 });

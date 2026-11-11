@@ -1,3 +1,4 @@
+import fs from 'node:fs';
 import path from 'node:path';
 
 // Pure helpers, kept separate so they can be unit tested.
@@ -370,3 +371,18 @@ export const poolOf = (p) => (p.kind === 'be-ticket' ? 'be' : 'main');
 
 // Version folder names -> the newest one ("10.1.0" beats "9.9.9"), or null when there are none.
 export const newestVersion = (names) => [...names].sort((a, b) => a.localeCompare(b, undefined, { numeric: true })).pop() ?? null;
+
+// Concerns in a compose file (normalised `docker compose config --format json`) that an agent wrote: anything outside a
+// small allowlist, host access, and folder mounts that resolve outside the project. Shown to the owner before approval.
+const COMPOSE_KEYS = new Set(['image', 'environment', 'ports', 'expose', 'healthcheck', 'command', 'entrypoint', 'volumes', 'restart', 'depends_on', 'networks', 'working_dir', 'user', 'labels', 'tmpfs', 'env_file', 'profiles', 'stop_grace_period', 'container_name', 'hostname']);
+export function unsafeCompose(cfg, dir, real = (x) => { try { return fs.realpathSync(x); } catch { return path.resolve(x); } }) {
+  const bad = [];
+  const root = real(dir) + path.sep;
+  for (const k of ['secrets', 'configs']) if (Object.keys(cfg?.[k] ?? {}).length) bad.push(`top-level ${k}`);
+  for (const [n, v] of Object.entries(cfg?.volumes ?? {})) if (v?.driver || v?.driver_opts) bad.push(`volume ${n}: custom driver`);
+  for (const [name, s] of Object.entries(cfg?.services ?? {})) {
+    for (const k of Object.keys(s)) if (!COMPOSE_KEYS.has(k)) bad.push(`${name}: ${k}`);
+    for (const v of s.volumes ?? []) if (v.type !== 'volume' && !(v.type === 'bind' && (real(v.source) + path.sep).startsWith(root))) bad.push(`${name}: mounts ${v.source ?? v.type}`);
+  }
+  return bad;
+}
