@@ -341,8 +341,11 @@ const squadRank = (t) => !t ? 9e15 : t.status === 'TODO' ? squadQueue().indexOf(
 const beStatus = (t) => !t ? '' : t.status === 'TODO' ? `TODO · #${squadQueue().indexOf(t) + 1} in queue` : t.status !== 'DONE' ? t.status : t.outcome === 'pushed' ? 'DONE · pushed' : t.outcome === 'push_failed' ? 'DONE · push failed' : t.outcome === 'no_code' ? 'DONE · no code' : 'DONE';
 // Squad board: every squad ticket in columns; finished tickets have their Jira comment one click away.
 const SQUAD_BOARD = 'squad-board';
-const SQUAD_COLS = [['todo', 'To-do', (t) => t.status === 'TODO'], ['work', 'In progress', (t) => ['READY', 'IN_PROGRESS', 'CHANGES_REQUESTED'].includes(t.status)],
-  ['qa', 'QA', (t) => t.status === 'QA'], ['blocked', 'Blocked', (t) => t.status === 'BLOCKED'], ['done', 'Done', (t) => t.status === 'DONE']];
+// Planning = baseline tests, Captain Plan, and Quinn's test-plan review (the app sets those notes); Dev = the dev building.
+const squadPlanning = (t) => ['READY', 'IN_PROGRESS', 'CHANGES_REQUESTED'].includes(t.status) && (t.plannedCycle !== t.cycles || /Baseline|Captain Plan|test plan/.test(t.note ?? ''));
+const SQUAD_COLS = [['todo', 'To-do', (t) => t.status === 'TODO'], ['plan', '📝 Planning', squadPlanning],
+  ['dev', '⌨️ Dev', (t) => ['READY', 'IN_PROGRESS', 'CHANGES_REQUESTED'].includes(t.status) && !squadPlanning(t)],
+  ['qa', '🔍 Tests & QA', (t) => t.status === 'QA'], ['blocked', 'Blocked', (t) => t.status === 'BLOCKED'], ['done', 'Done', (t) => t.status === 'DONE']];
 async function copyText(btn, text, label) {
   try { await navigator.clipboard.writeText(text); btn.textContent = 'Copied ✓'; } catch { btn.textContent = 'Copy failed: open the ticket and select the text'; }
   setTimeout(() => { btn.textContent = label; }, 2000);

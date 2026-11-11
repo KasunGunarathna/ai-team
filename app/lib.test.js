@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseVerdict, nextTask, normaliseTasks, normaliseQuestions, secretFiles, formatClaudeEvent, formatCodexEvent, sumUsage, permissionRule, repoForKey, githubTreeUrl, summarySections, parseBaseline, commitType, ticketTitle, jiraComment, poolOf, newestVersion, jestFailures, isTestHarness, prLinkFromPush, squadNext, tokensByDay } from './lib.js';
+import { parseVerdict, nextTask, normaliseTasks, normaliseQuestions, secretFiles, formatClaudeEvent, formatCodexEvent, sumUsage, permissionRule, repoForKey, githubTreeUrl, summarySections, parseBaseline, commitType, ticketTitle, jiraComment, poolOf, newestVersion, jestFailures, isTestHarness, prLinkFromPush, squadNext, tokensByDay, codexContext } from './lib.js';
 
 test('parseVerdict takes the last verdict and defaults to BLOCKED', () => {
   assert.equal(parseVerdict('blah\nVERDICT: PASS'), 'PASS');
@@ -271,4 +271,11 @@ test('tokensByDay: total tokens per engine for each of the last N local days, ol
   const d = tokensByDay(runs, 3, now);
   assert.deepEqual(d.claude, [0, 0, 105]);
   assert.deepEqual(d.codex, [0, 7, 0]);
+});
+
+test('codexContext reads the latest context use from a Codex session log', () => {
+  const tc = (input, win) => JSON.stringify({ type: 'event_msg', payload: { type: 'token_count', info: { last_token_usage: { input_tokens: input }, model_context_window: win } } });
+  assert.deepEqual(codexContext([tc(1000, 258400), '{"type":"x"}', tc(46111, 258400), ''].join('\n')), { used: 46111, window: 258400 });
+  assert.equal(codexContext('{"type":"event_msg","payload":{"type":"token_count","info":null}}'), null);
+  assert.equal(codexContext('garbage'), null);
 });

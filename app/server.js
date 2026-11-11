@@ -6,7 +6,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import os from 'node:os';
 import { spawn, execFile, execFileSync } from 'node:child_process';
-import { REF_TYPES, isImageRef, refFileName, parseFigmaUrl, TASK_ID, authFailure, codexRateLimits, tokensSince, isOpen, limitUntil, parseVerdict, nextTask, readyTasks, normaliseTasks, normaliseQuestions, secretFiles, formatClaudeEvent, formatCodexEvent, sumUsage, permissionRule, clip, poolOf, repoForKey, ticketTitle, summarySections, githubTreeUrl, parseBaseline, jestFailures, isTestHarness, commitType, jiraComment, newestVersion, prLinkFromPush, squadNext, tokensByDay } from './lib.js';
+import { REF_TYPES, isImageRef, refFileName, parseFigmaUrl, TASK_ID, authFailure, codexRateLimits, tokensSince, isOpen, limitUntil, parseVerdict, nextTask, readyTasks, normaliseTasks, normaliseQuestions, secretFiles, formatClaudeEvent, formatCodexEvent, sumUsage, permissionRule, clip, poolOf, repoForKey, ticketTitle, summarySections, githubTreeUrl, parseBaseline, jestFailures, isTestHarness, commitType, jiraComment, newestVersion, prLinkFromPush, squadNext, tokensByDay, codexContext } from './lib.js';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
 const DATA = process.env.AI_TEAM_DATA || path.join(ROOT, 'data');
@@ -244,7 +244,15 @@ async function agentRun(p, owner, label, engine, args, job, cwd = p.path, handof
       killTree(job.child);
     }
   };
+  // Codex prints no context in its JSON stream; read it from its session log every 5 s instead.
+  let codexFile = null;
+  const codexPoll = engine === 'codex' ? setInterval(() => {
+    codexFile ??= codexSessionFor(cwd, t0 - 5000);
+    const c = codexFile && codexLiveContext(codexFile);
+    if (c) job.context = { used: c.used, window: c.window, pct: Math.min(100, Math.round((100 * c.used) / c.window)), model: 'codex' };
+  }, 5000) : null;
   const r = await run(engine, args, cwd, path.join(dir, log), engine === 'claude' ? formatClaudeEvent : formatCodexEvent, `│ ${label}`, job, onEvent);
+  clearInterval(codexPoll);
   if (r.model && r.window) state.contextWindows[r.model] = r.window;
   const handedOff = !!job.handoff;
   job.handoff = false; job.context = null;
@@ -1122,6 +1130,27 @@ async function readJson(req, max = 100_000) {
 
 // Codex keeps its plan limits in its own session logs; read the newest one (read-only, cached for a minute).
 let codexCache = { at: 0, value: null };
+// Live context for a running Codex agent: its session log (today's, started after `since`, for this cwd) has token_count events.
+const CODEX_SESSIONS = path.join(process.env.CODEX_HOME || path.join(os.homedir(), '.codex'), 'sessions');
+function codexSessionFor(cwd, since) {
+  const d = new Date(), dir = path.join(CODEX_SESSIONS, String(d.getFullYear()), String(d.getMonth() + 1).padStart(2, '0'), String(d.getDate()).padStart(2, '0'));
+  try {
+    for (const f of fs.readdirSync(dir).filter((n) => n.endsWith('.jsonl')).map((n) => path.join(dir, n))) {
+      if (fs.statSync(f).mtimeMs < since) continue;
+      const fd = fs.openSync(f, 'r'), buf = Buffer.alloc(4096); fs.readSync(fd, buf, 0, 4096, 0); fs.closeSync(fd);
+      if (buf.toString('utf8').includes(`"cwd":${JSON.stringify(cwd)}`)) return f;
+    }
+  } catch { /* no session log yet */ }
+  return null;
+}
+function codexLiveContext(file) {
+  try {
+    const fd = fs.openSync(file, 'r'), size = fs.fstatSync(fd).size, len = Math.min(size, 256 * 1024), buf = Buffer.alloc(len);
+    fs.readSync(fd, buf, 0, len, size - len); fs.closeSync(fd);
+    return codexContext(buf.toString('utf8'));
+  } catch { return null; }
+}
+
 function codexLimits() {
   if (Date.now() - codexCache.at < 60_000) return codexCache.value;
   let value = null;

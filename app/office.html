@@ -733,7 +733,7 @@ function hud() {
   $('team').replaceChildren(...TEAM.map((t) => {
     const act = activeFor(t.role), isActive = !!act;
     const mins = isActive ? Math.max(0, Math.round((Date.now() - Date.parse(act.startedAt)) / 60000)) : 0;
-    const doing = isActive ? `${t.role === 'qa' ? 'testing' : t.role === 'pm-ba' ? 'planning' : t.role === 'ui-ux' ? 'designing the UI for' : 'coding'} ${act.label} in ${act.project} (${mins} min)${S.breaks[t.role] ? ' · break after this step' : ''}`
+    const doing = isActive ? `${act.tests ? 'running the test suite for' : /-testplan$/.test(act.label) ? 'reviewing the test plan of' : t.role === 'qa' || t.role === 'be-qa' ? 'testing' : t.role === 'pm-ba' || t.role === 'squad-pm' ? 'planning' : t.role === 'ui-ux' ? 'designing the UI for' : 'coding'} ${act.label} in ${act.project} (${mins} min)${S.breaks[t.role] ? ' · break after this step' : ''}`
       : !open ? 'gone home 🏠' : S.breaks[t.role] ? 'on a break ☕ (click to call back)' : holdOf(t.role) === 'auth' ? `waiting at the door 🔑: ${t.engine} login/subscription problem` : holdOf(t.role) === 'limit' ? `recharging 🔋 until the ${t.engine} limit resets (${hhmm(S.limits[engineOf(t.role)])})` : S.teaBreak ? 'on tea break ☕ until you press Back to work'
       : t.role === 'pm-ba' && S.projects.some((p) => p.decisions.some((d) => !d.answer)) ? 'waiting for your decisions at the whiteboard ⚑'
       : (pos[t.role]?.said ?? 'idle').replace(/^\S+\s/, '').toLowerCase();

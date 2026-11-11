@@ -232,6 +232,19 @@ export function codexRateLimits(text) {
   return null;
 }
 
+// Codex session log (JSON lines) -> context in use right now: { used, window } from the latest token_count, or null.
+export function codexContext(text) {
+  const lines = String(text).split('\n');
+  for (let i = lines.length - 1; i >= 0; i--) {
+    if (!lines[i].includes('"token_count"')) continue;
+    let info;
+    try { info = JSON.parse(lines[i]).payload?.info; } catch { continue; }
+    const used = Number(info?.last_token_usage?.input_tokens), window = Number(info?.model_context_window);
+    if (used > 0 && window > 0) return { used, window };
+  }
+  return null;
+}
+
 // ---------- design references (inputs for the UI/UX agent) ----------
 export const REF_TYPES = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp', html: 'text/html; charset=utf-8', htm: 'text/html; charset=utf-8' };
 export const isImageRef = (name) => /\.(png|jpe?g|gif|webp)$/i.test(name);
